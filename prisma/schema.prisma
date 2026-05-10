@@ -1,0 +1,160 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Перечисления ─────────────────────────────────────────────────────────────
+
+enum PropertyType {
+  OFFICE
+  WAREHOUSE
+  RETAIL
+  MIXED
+  RESIDENTIAL
+}
+
+enum IndexationType {
+  CPI
+  FIXED
+  NONE
+}
+
+enum LeaseStatus {
+  ACTIVE
+  EXPIRED
+  TERMINATING
+}
+
+enum AmortizationType {
+  ANNUITY
+  BULLET
+  LINEAR
+}
+
+enum TerminalType {
+  EXIT_CAP_RATE
+  GORDON
+}
+
+enum DistributionPeriodicity {
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+}
+
+// ─── Фонд ─────────────────────────────────────────────────────────────────────
+
+model Fund {
+  id                      String                  @id @default(cuid())
+  name                    String
+  registrationNumber      String?
+  startDate               DateTime
+  endDate                 DateTime
+  totalEmission           Float                   // объём эмиссии, ₽
+  nominalUnitPrice        Float                   // номинальная стоимость пая, ₽
+  totalUnits              Float                   // расчётное: totalEmission / nominalUnitPrice
+  managementFeeRate       Float                   // % от среднегодового СЧА/год, в долях
+  fundExpensesRate        Float                   // спец.деп + рег + оценщик, % от СЧА/год, в долях
+  upfrontFeeRate          Float                   // Upfront fee, в долях
+  successFeeOperational   Float                   // Success fee operational, % от выплат, в долях
+  successFeeExit          Float                   // Success fee exit, % от прироста СЧА, в долях
+  distributionPeriodicity DistributionPeriodicity
+  hasDebt                 Boolean                 @default(false)
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+
+  properties              Property[]
+  fundDebts               FundDebt[]
+}
+
+// ─── Объект недвижимости ──────────────────────────────────────────────────────
+
+model Property {
+  id                  String       @id @default(cuid())
+  fundId              String
+  name                String
+  type                PropertyType
+  address             String
+  totalArea           Float        // м²
+  rentableArea        Float        // GLA, м²
+  cadastralValue      Float?       // кадастровая стоимость здания, ₽
+  landCadastralValue  Float?       // кадастровая стоимость ЗУ, ₽
+  propertyTaxRate     Float        // ставка налога на имущество, в долях
+  landTaxRate         Float        // ставка налога на ЗУ, в долях
+  opexRate            Float        // ₽/м²/год (индексируется на ИПЦ)
+  maintenanceRate     Float        // эксплуатационные расходы, ₽/м²/год (индексируется на ИПЦ)
+  acquisitionPrice    Float?       // цена приобретения, ₽
+  purchaseDate        DateTime?    // дата покупки объекта фондом
+  saleDate            DateTime?    // дата продажи объекта фондом
+  exitCapRate         Float?       // cap rate продажи, в долях
+  wacc                Float        // ставка дисконтирования (WACC), в долях
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  fund                Fund                  @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  leaseContracts      LeaseContract[]
+  capexItems          CapexItem[]
+}
+
+// ─── Договор аренды ───────────────────────────────────────────────────────────
+
+model LeaseContract {
+  id                              String         @id @default(cuid())
+  propertyId                      String
+  tenantName                      String
+  area                            Float          // м²
+  baseRent                        Float          // ₽/м²/год
+  indexationType                  IndexationType
+  indexationRate                  Float?         // фиксированный % индексации/год, в долях
+  opexReimbursementRate           Float          // ставка возмещения OPEX, ₽/м²/год
+  opexReimbursementIndexationType IndexationType
+  opexReimbursementIndexationRate Float?         // фикс. % индексации возмещения, в долях
+  startDate                       DateTime
+  endDate                         DateTime
+  securityDeposit                 Float?         // ₽
+  status                          LeaseStatus
+  renewalOption                   Boolean        @default(false)
+  breakOption                     Boolean        @default(false)
+  vatIncluded                     Boolean        @default(false)
+  createdAt                       DateTime       @default(now())
+  updatedAt                       DateTime       @updatedAt
+
+  property                        Property       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+}
+
+// ─── Капитальные затраты ──────────────────────────────────────────────────────
+
+model CapexItem {
+  id           String   @id @default(cuid())
+  propertyId   String
+  name         String
+  amount       Float    // ₽
+  plannedDate  DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+}
+
+// ─── Долг на уровне фонда ─────────────────────────────────────────────────────
+
+model FundDebt {
+  id               String           @id @default(cuid())
+  fundId           String
+  lenderName       String
+  principalAmount  Float            // ₽
+  interestRate     Float            // ставка, % годовых, в долях
+  startDate        DateTime
+  endDate          DateTime
+  amortizationType AmortizationType
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  fund             Fund             @relation(fields: [fundId], references: [id], onDelete: Cascade)
+}
+
