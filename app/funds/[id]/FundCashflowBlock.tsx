@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { CashflowTable } from '@/components/tables/CashflowTable'
 import { CashRollTable } from '@/components/tables/CashRollTable'
-import { calcIRR } from '@/lib/calculations/dcf'
+import { calcInvestorIRR } from '@/lib/calculations/metrics'
 import { formatRub, formatPct } from '@/lib/utils/format'
 import type {
   MonthlyCashflow,
@@ -35,6 +35,7 @@ type CfTab = 'cashflow' | 'cashroll'
 
 function computeMetrics(
   cashflows: MonthlyCashflow[],
+  cashRoll: MonthlyCashRoll[],
   acquisitionPrice: number,
   navData: NAVResult[] | null,
 ): Metrics {
@@ -48,11 +49,8 @@ function computeMetrics(
   const annualFCF = firstYear.reduce((s, cf) => s + cf.fcf, 0)
   const capRate = acquisitionPrice > 0 ? annualNOI / acquisitionPrice : null
 
-  let irr: number | null = null
-  if (acquisitionPrice > 0) {
-    const monthlyIRR = calcIRR([-acquisitionPrice, ...cashflows.map(cf => cf.fcf)])
-    if (!isNaN(monthlyIRR)) irr = Math.pow(1 + monthlyIRR, 12) - 1
-  }
+  const irrAnnual = cashRoll.length > 0 ? calcInvestorIRR(cashRoll) : 0
+  const irr = irrAnnual === 0 ? null : irrAnnual
 
   const lastNav = navData && navData.length > 0 ? navData[navData.length - 1] : null
   const nav = lastNav?.nav ?? null
@@ -84,7 +82,7 @@ export function FundCashflowBlock({
 }: Props) {
   const [cfTab, setCfTab] = useState<CfTab>('cashflow')
 
-  const metrics = computeMetrics(cashflows, totalAcquisitionPrice, navData)
+  const metrics = computeMetrics(cashflows, cashRoll, totalAcquisitionPrice, navData)
 
   const tabs: { id: CfTab; label: string }[] = [
     { id: 'cashflow', label: 'Денежный поток' },
@@ -127,7 +125,7 @@ export function FundCashflowBlock({
 
       {/* ── Таблица CF / Кэш-ролл ── */}
       {cfTab === 'cashflow' ? (
-        <CashflowTable cashflows={cashflows} variant="fund" />
+        <CashflowTable cashRoll={cashRoll} variant="fund" />
       ) : (
         <CashRollTable data={cashRoll} />
       )}

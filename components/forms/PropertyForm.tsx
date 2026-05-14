@@ -3,6 +3,7 @@
 import { useState } from 'react'
 
 type PropertyType = 'OFFICE' | 'WAREHOUSE' | 'RETAIL' | 'MIXED' | 'RESIDENTIAL'
+type TerminalType = 'EXIT_CAP_RATE' | 'GORDON'
 
 const PROPERTY_TYPE_LABELS: Record<PropertyType, string> = {
   OFFICE: 'Офис',
@@ -10,6 +11,11 @@ const PROPERTY_TYPE_LABELS: Record<PropertyType, string> = {
   RETAIL: 'Торговый',
   MIXED: 'Смешанный',
   RESIDENTIAL: 'Жилой',
+}
+
+const TERMINAL_TYPE_LABELS: Record<TerminalType, string> = {
+  EXIT_CAP_RATE: 'Cap Rate выхода',
+  GORDON: 'Модель Гордона',
 }
 
 export type PropertyData = {
@@ -31,6 +37,9 @@ export type PropertyData = {
   saleDate: string | null
   exitCapRate: number | null
   wacc: number
+  projectionYears: number
+  terminalType: TerminalType
+  gordonGrowthRate: number | null
 }
 
 type Props = {
@@ -57,6 +66,9 @@ type FormState = {
   saleDate: string
   exitCapRate: string
   wacc: string
+  projectionYears: string
+  terminalType: TerminalType
+  gordonGrowthRate: string
 }
 
 function toDateInput(isoStr: string): string {
@@ -81,6 +93,9 @@ function toFormState(data: PropertyData): FormState {
     saleDate: data.saleDate ? toDateInput(data.saleDate) : '',
     exitCapRate: data.exitCapRate != null ? String(+(data.exitCapRate * 100).toFixed(4)) : '',
     wacc: String(+(data.wacc * 100).toFixed(4)),
+    projectionYears: String(data.projectionYears),
+    terminalType: data.terminalType,
+    gordonGrowthRate: data.gordonGrowthRate != null ? String(+(data.gordonGrowthRate * 100).toFixed(4)) : '',
   }
 }
 
@@ -101,6 +116,9 @@ const emptyState: FormState = {
   saleDate: '',
   exitCapRate: '',
   wacc: '',
+  projectionYears: '10',
+  terminalType: 'EXIT_CAP_RATE',
+  gordonGrowthRate: '',
 }
 
 const inputCls = 'w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50'
@@ -146,11 +164,17 @@ export function PropertyForm({ fundId, initialData, onSuccess, onCancel }: Props
     const landCadastralValue = form.landCadastralValue !== '' ? parseFloat(form.landCadastralValue) : null
     const acquisitionPrice = form.acquisitionPrice !== '' ? parseFloat(form.acquisitionPrice) : null
     const exitCapRate = form.exitCapRate !== '' ? parseFloat(form.exitCapRate) : null
+    const projectionYears = parseInt(form.projectionYears, 10)
+    const gordonGrowthRate = form.gordonGrowthRate !== '' ? parseFloat(form.gordonGrowthRate) : null
 
     if (cadastralValue !== null && isNaN(cadastralValue)) { setError('Кадастровая стоимость здания указана некорректно'); return }
     if (landCadastralValue !== null && isNaN(landCadastralValue)) { setError('Кадастровая стоимость ЗУ указана некорректно'); return }
     if (acquisitionPrice !== null && isNaN(acquisitionPrice)) { setError('Цена приобретения указана некорректно'); return }
     if (exitCapRate !== null && isNaN(exitCapRate)) { setError('Cap Rate выхода указан некорректно'); return }
+    if (isNaN(projectionYears) || projectionYears < 1) { setError('Укажите горизонт DCF (≥ 1 год)'); return }
+    if (form.terminalType === 'GORDON' && (gordonGrowthRate === null || isNaN(gordonGrowthRate))) {
+      setError('Для модели Гордона укажите темп роста, %'); return
+    }
 
     const body = {
       fundId,
@@ -170,6 +194,11 @@ export function PropertyForm({ fundId, initialData, onSuccess, onCancel }: Props
       saleDate: form.saleDate ? new Date(form.saleDate).toISOString() : null,
       exitCapRate: exitCapRate !== null ? exitCapRate / 100 : null,
       wacc: wacc / 100,
+      projectionYears,
+      terminalType: form.terminalType,
+      gordonGrowthRate: form.terminalType === 'GORDON' && gordonGrowthRate !== null
+        ? gordonGrowthRate / 100
+        : null,
     }
 
     setLoading(true)
@@ -343,18 +372,67 @@ export function PropertyForm({ fundId, initialData, onSuccess, onCancel }: Props
             />
           </div>
           <div>
-            <label className={labelCls}>Cap Rate выхода, %</label>
+            <label className={labelCls}>
+              Горизонт DCF, лет <span className="text-red-500">*</span>
+            </label>
             <input
               type="number"
-              value={form.exitCapRate}
-              onChange={e => set('exitCapRate', e.target.value)}
-              placeholder="8"
-              min="0"
-              step="0.01"
+              value={form.projectionYears}
+              onChange={e => set('projectionYears', e.target.value)}
+              placeholder="10"
+              min="1"
+              step="1"
               className={inputCls}
               disabled={loading}
             />
           </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelCls}>
+              Метод терминальной стоимости <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={form.terminalType}
+              onChange={e => set('terminalType', e.target.value as TerminalType)}
+              className={inputCls + ' bg-white'}
+              disabled={loading}
+            >
+              {(Object.keys(TERMINAL_TYPE_LABELS) as TerminalType[]).map(t => (
+                <option key={t} value={t}>{TERMINAL_TYPE_LABELS[t]}</option>
+              ))}
+            </select>
+          </div>
+          {form.terminalType === 'EXIT_CAP_RATE' ? (
+            <div>
+              <label className={labelCls}>Cap Rate выхода, %</label>
+              <input
+                type="number"
+                value={form.exitCapRate}
+                onChange={e => set('exitCapRate', e.target.value)}
+                placeholder="8"
+                min="0"
+                step="0.01"
+                className={inputCls}
+                disabled={loading}
+              />
+            </div>
+          ) : (
+            <div>
+              <label className={labelCls}>
+                Темп роста (g), % <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="number"
+                value={form.gordonGrowthRate}
+                onChange={e => set('gordonGrowthRate', e.target.value)}
+                placeholder="3"
+                step="0.01"
+                className={inputCls}
+                disabled={loading}
+              />
+            </div>
+          )}
         </div>
       </div>
 

@@ -1,4 +1,4 @@
-import type { MonthlyCashflow, MonthlyPeriod, LeaseInput, DebtInput } from '../types'
+import type { MonthlyCashflow, MonthlyCashRoll, MonthlyPeriod, LeaseInput, DebtInput } from '../types'
 import { calcDebtSchedule } from './amortization'
 import { calcIRR } from './dcf'
 import { MONTHS_PER_YEAR } from './constants'
@@ -136,35 +136,27 @@ export function calcNAVPerUnit(nav: number, totalUnits: number): number {
 // ─── Метрики доходности пайщика ───────────────────────────────────────────────
 
 /**
- * IRR пайщика (годовой).
+ * IRR пайщика (годовой) на основе помесячного кэш-ролла фонда.
  *
- * Денежный поток пайщика:
- *   t=0: -(totalEmission + upfrontFee)  — полная стоимость входа с надбавкой
- *   t=1..N: distributions[t-1]          — периодические выплаты
- *   t=N: последний элемент + finalNAV   — возврат остаточной стоимости
+ * Денежный поток пайщика по периодам:
+ *   t=0:           −(emissionInflow + upfrontFeeOutflow)
+ *   t=последний:    distributionOutflow + cashEnd  (последняя выплата + остаточный кэш фонда)
+ *   иначе:          distributionOutflow            (текущие выплаты пайщикам)
  *
- * upfrontFee = upfrontFeeRate × totalEmission / (1 − upfrontFeeRate)
+ * IRR помесячный → годовой = (1 + r)^12 − 1.
+ * Если NaN (нет смены знака) — возвращает 0.
  */
-export function calcInvestorIRR(
-  totalEmission: number,
-  upfrontFeeRate: number,
-  distributions: number[],
-  finalNAV: number
-): number {
-  const upfrontFee =
-    upfrontFeeRate > 0 && upfrontFeeRate < 1
-      ? (upfrontFeeRate * totalEmission) / (1 - upfrontFeeRate)
-      : 0
+export function calcInvestorIRR(cashRoll: MonthlyCashRoll[]): number {
+  if (cashRoll.length === 0) return 0
 
-  const cashflows: number[] = [-(totalEmission + upfrontFee), ...distributions]
+  const lastIdx = cashRoll.length - 1
+  const flows = cashRoll.map((r, i) => {
+    if (i === 0)       return -(r.emissionInflow + r.upfrontFeeOutflow)
+    if (i === lastIdx) return r.distributionOutflow + r.cashEnd
+    return r.distributionOutflow
+  })
 
-  if (cashflows.length === 1) {
-    cashflows.push(finalNAV)
-  } else {
-    cashflows[cashflows.length - 1]! += finalNAV
-  }
-
-  const irrMonthly = calcIRR(cashflows)
+  const irrMonthly = calcIRR(flows)
   return isNaN(irrMonthly) ? 0 : Math.pow(1 + irrMonthly, MONTHS_PER_YEAR) - 1
 }
 

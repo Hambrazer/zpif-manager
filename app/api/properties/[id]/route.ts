@@ -1,10 +1,11 @@
-import { type Prisma, type PropertyType } from '@prisma/client'
+import { type Prisma, type PropertyType, type TerminalType } from '@prisma/client'
 import { prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/utils/auth'
 
 type Params = { params: { id: string } }
 
 const VALID_PROPERTY_TYPES = new Set<PropertyType>(['OFFICE', 'WAREHOUSE', 'RETAIL', 'MIXED', 'RESIDENTIAL'])
+const VALID_TERMINAL_TYPES = new Set<TerminalType>(['EXIT_CAP_RATE', 'GORDON'])
 
 export async function GET(_req: Request, { params }: Params) {
   const authError = await requireAuth()
@@ -54,6 +55,15 @@ export async function PUT(req: Request, { params }: Params) {
     if ('saleDate' in b) upd.saleDate = typeof b['saleDate'] === 'string' ? new Date(b['saleDate']) : null
     if (typeof b['exitCapRate'] === 'number' || b['exitCapRate'] === null) upd.exitCapRate = b['exitCapRate'] as number | null
     if (typeof b['wacc'] === 'number') upd.wacc = b['wacc']
+    if (typeof b['projectionYears'] === 'number' && b['projectionYears'] > 0) {
+      upd.projectionYears = Math.trunc(b['projectionYears'] as number)
+    }
+    if (VALID_TERMINAL_TYPES.has(b['terminalType'] as TerminalType)) {
+      upd.terminalType = b['terminalType'] as TerminalType
+    }
+    if (typeof b['gordonGrowthRate'] === 'number' || b['gordonGrowthRate'] === null) {
+      upd.gordonGrowthRate = b['gordonGrowthRate'] as number | null
+    }
 
     const property = await prisma.property.update({ where: { id: params.id }, data: upd })
     return Response.json({ data: property })

@@ -93,6 +93,9 @@ model Property {
   saleDate            DateTime?    // дата продажи объекта фондом
   exitCapRate         Float?       // cap rate продажи, в долях
   wacc                Float        // ставка дисконтирования (WACC), в долях
+  projectionYears     Int          @default(10) // горизонт DCF в годах
+  terminalType        TerminalType @default(EXIT_CAP_RATE) // метод терминальной стоимости
+  gordonGrowthRate    Float?       // темп роста для модели Гордона, в долях
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
 

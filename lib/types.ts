@@ -4,6 +4,7 @@ export type IndexationType = 'CPI' | 'FIXED' | 'NONE'
 export type AmortizationType = 'ANNUITY' | 'BULLET' | 'LINEAR'
 export type LeaseStatus = 'ACTIVE' | 'EXPIRED' | 'TERMINATING'
 export type DistributionPeriodicity = 'MONTHLY' | 'QUARTERLY' | 'ANNUAL'
+export type TerminalType = 'EXIT_CAP_RATE' | 'GORDON'
 
 // ─── Периоды ─────────────────────────────────────────────────────────────────
 
@@ -63,6 +64,9 @@ export type PropertyInput = {
   saleDate: Date | null                         // дата продажи объекта фондом
   exitCapRate: number | null                    // ставка капитализации при продаже, в долях
   wacc: number                                  // ставка дисконтирования, в долях
+  projectionYears: number                       // горизонт DCF в годах
+  terminalType: TerminalType                    // метод терминальной стоимости
+  gordonGrowthRate: number | null               // темп роста для модели Гордона, в долях
   leases: LeaseInput[]
   capexItems: CapexInput[]
 }

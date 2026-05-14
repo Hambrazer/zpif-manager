@@ -5,17 +5,20 @@ import { prisma } from '@/lib/db'
 import { FundsDashboard } from './FundsDashboard'
 import type { FundSummary } from './FundsDashboard'
 import { calcPropertyCashflow, type PropertyExpenseInput } from '@/lib/calculations/cashflow'
-import { calcFundCashflow, calcNAV, calcNAVPerUnit } from '@/lib/calculations/metrics'
-import { calcDCF, calcIRR } from '@/lib/calculations/dcf'
+import { calcFundCashflow, calcNAV, calcNAVPerUnit, calcInvestorIRR } from '@/lib/calculations/metrics'
+import { calcFundCashRoll, generatePeriods, type PropertyCFInput } from '@/lib/calculations/fund-cashflow'
+import { calcDCF } from '@/lib/calculations/dcf'
 import { MONTHS_PER_YEAR } from '@/lib/calculations/constants'
 import type {
   LeaseInput,
   CapexInput,
   DebtInput,
+  FundInput,
   MonthlyPeriod,
   MonthlyCashflow,
   IndexationType,
   AmortizationType,
+  DistributionPeriodicity,
 } from '@/lib/types'
 
 const DEFAULT_YEARS = 10
@@ -140,12 +143,71 @@ export default async function DashboardPage() {
     const fundCF = calcFundCashflow(propertyCashflows, annualFundExpenses, fundDebts, periods)
     const annualNOI = fundCF.slice(0, 12).reduce((sum, cf) => sum + cf.noi, 0)
 
-    let irr: number | null = null
-    if (totalAcquisitionPrice > 0) {
-      const irrFlows = [-totalAcquisitionPrice, ...fundCF.map(cf => cf.fcf)]
-      const irrMonthly = calcIRR(irrFlows)
-      irr = isNaN(irrMonthly) ? null : Math.pow(1 + irrMonthly, MONTHS_PER_YEAR) - 1
+    // IRR инвестора: считается через cashRoll фонда на горизонте startDate–endDate
+    const fundPeriods = generatePeriods(fund.startDate, fund.endDate)
+    const propertyCFInputs: PropertyCFInput[] = fund.properties.map(property => {
+      const propertyInput: PropertyExpenseInput = {
+        rentableArea: property.rentableArea,
+        opexRate: property.opexRate,
+        maintenanceRate: property.maintenanceRate,
+        cadastralValue: property.cadastralValue,
+        landCadastralValue: property.landCadastralValue,
+        propertyTaxRate: property.propertyTaxRate,
+        landTaxRate: property.landTaxRate,
+        cpiRate: DEFAULT_CPI_RATE,
+      }
+      const leases: LeaseInput[] = property.leaseContracts.map(lc => ({
+        id: lc.id,
+        tenantName: lc.tenantName,
+        area: lc.area,
+        baseRent: lc.baseRent,
+        startDate: lc.startDate,
+        endDate: lc.endDate,
+        indexationType: lc.indexationType as IndexationType,
+        indexationRate: lc.indexationRate,
+        firstIndexationDate: lc.firstIndexationDate,
+        indexationFrequency: lc.indexationFrequency,
+        opexReimbursementRate: lc.opexReimbursementRate,
+        opexReimbursementIndexationType: lc.opexReimbursementIndexationType as IndexationType,
+        opexReimbursementIndexationRate: lc.opexReimbursementIndexationRate,
+        opexFirstIndexationDate: lc.opexFirstIndexationDate,
+        opexIndexationFrequency: lc.opexIndexationFrequency,
+        status: lc.status as 'ACTIVE' | 'EXPIRED' | 'TERMINATING',
+      }))
+      const capexItems: CapexInput[] = property.capexItems.map(c => ({
+        id: c.id,
+        amount: c.amount,
+        plannedDate: c.plannedDate,
+      }))
+      return {
+        acquisitionPrice: property.acquisitionPrice,
+        purchaseDate: property.purchaseDate,
+        saleDate: property.saleDate,
+        exitCapRate: property.exitCapRate,
+        cashflows: calcPropertyCashflow(propertyInput, leases, capexItems, fundPeriods),
+      }
+    })
+
+    const fundInput: FundInput = {
+      id: fund.id,
+      startDate: fund.startDate,
+      endDate: fund.endDate,
+      totalEmission: fund.totalEmission,
+      nominalUnitPrice: fund.nominalUnitPrice,
+      totalUnits: fund.totalUnits,
+      managementFeeRate: fund.managementFeeRate,
+      fundExpensesRate: fund.fundExpensesRate,
+      upfrontFeeRate: fund.upfrontFeeRate,
+      successFeeOperational: fund.successFeeOperational,
+      successFeeExit: fund.successFeeExit,
+      distributionPeriodicity: fund.distributionPeriodicity as DistributionPeriodicity,
+      properties: [],
+      fundDebts: [],
     }
+
+    const cashRoll = calcFundCashRoll(fundInput, propertyCFInputs, fundDebts)
+    const irrAnnual = calcInvestorIRR(cashRoll)
+    const irr: number | null = irrAnnual === 0 ? null : irrAnnual
 
     const totalFundDebtPrincipal = fund.fundDebts.reduce(
       (sum, d) => sum + d.principalAmount, 0

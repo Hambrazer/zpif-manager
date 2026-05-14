@@ -8,7 +8,9 @@ import {
   calcCashOnCash,
   calcCapitalGain,
 } from '../../lib/calculations/metrics'
-import type { MonthlyCashflow, MonthlyPeriod, LeaseInput, DebtInput } from '../../lib/types'
+import type {
+  MonthlyCashflow, MonthlyCashRoll, MonthlyPeriod, LeaseInput, DebtInput,
+} from '../../lib/types'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -245,39 +247,88 @@ describe('calcNAVPerUnit', () => {
 
 // ─── calcInvestorIRR ──────────────────────────────────────────────────────────
 
+function makeRoll(
+  year: number, month: number,
+  overrides: Partial<MonthlyCashRoll> = {},
+): MonthlyCashRoll {
+  return {
+    period: { year, month },
+    cashBegin: 0,
+    noiInflow: 0,
+    disposalInflow: 0,
+    emissionInflow: 0,
+    acquisitionOutflow: 0,
+    upfrontFeeOutflow: 0,
+    managementFeeOutflow: 0,
+    fundExpensesOutflow: 0,
+    successFeeOperationalOutflow: 0,
+    successFeeExitOutflow: 0,
+    debtServiceOutflow: 0,
+    distributionOutflow: 0,
+    cashEnd: 0,
+    ...overrides,
+  }
+}
+
 describe('calcInvestorIRR', () => {
-  it('без надбавки, 12 нулевых выплат + finalNAV=110% → IRR≈10% годовых', () => {
-    // flows: [-100_000, 0×11, 110_000]
-    // (1+r)^12 = 1.1 → IRR = 10%
-    const distributions = Array<number>(12).fill(0)
-    const irr = calcInvestorIRR(100_000, 0, distributions, 110_000)
-    expect(irr).toBeCloseTo(0.10, 3)
+  // Helper: построить кэш-ролл с N+1 периодами (N интервалов) из t=0 в t=N
+  function makeRange(months: number): MonthlyCashRoll[] {
+    const out: MonthlyCashRoll[] = []
+    for (let i = 0; i <= months; i++) {
+      const y = 2026 + Math.floor(i / 12)
+      const m = (i % 12) + 1
+      out.push(makeRoll(y, m))
+    }
+    return out
+  }
+
+  it('emission 100k в t=0, cashEnd 110k через 12 интервалов → IRR≈10% годовых', () => {
+    const roll = makeRange(12) // 13 периодов, 12 интервалов
+    roll[0] = makeRoll(2026, 1, { emissionInflow: 100_000 })
+    roll[12] = makeRoll(2027, 1, { cashEnd: 110_000 })
+    expect(calcInvestorIRR(roll)).toBeCloseTo(0.10, 3)
   })
 
-  it('надбавка 5% снижает IRR по сравнению с нулевой надбавкой', () => {
-    const distributions = Array<number>(12).fill(0)
-    const irrNoFee = calcInvestorIRR(100_000, 0,    distributions, 110_000)
-    const irrFee   = calcInvestorIRR(100_000, 0.05, distributions, 110_000)
-    expect(irrFee).toBeLessThan(irrNoFee)
+  it('upfront fee увеличивает отток t=0 и снижает IRR', () => {
+    const noFee = makeRange(12)
+    noFee[0] = makeRoll(2026, 1, { emissionInflow: 100_000 })
+    noFee[12] = makeRoll(2027, 1, { cashEnd: 110_000 })
+
+    const withFee = makeRange(12)
+    withFee[0] = makeRoll(2026, 1, { emissionInflow: 100_000, upfrontFeeOutflow: 5_000 })
+    withFee[12] = makeRoll(2027, 1, { cashEnd: 110_000 })
+
+    expect(calcInvestorIRR(withFee)).toBeLessThan(calcInvestorIRR(noFee))
   })
 
-  it('нулевой finalNAV и нулевые выплаты → IRR=0 (нет смены знака)', () => {
-    // нет положительных потоков → calcIRR вернёт NaN → 0
-    const irr = calcInvestorIRR(100_000, 0, [0, 0], 0)
-    expect(irr).toBe(0)
+  it('emission и cashEnd одинаковые, distributions=0 → IRR≈0', () => {
+    const roll = makeRange(12)
+    roll[0] = makeRoll(2026, 1, { emissionInflow: 100_000 })
+    roll[12] = makeRoll(2027, 1, { cashEnd: 100_000 })
+    expect(calcInvestorIRR(roll)).toBeCloseTo(0, 5)
   })
 
-  it('ежемесячные выплаты покрывают вложение полностью за 12 мес → IRR > 0', () => {
-    // инвестор вложил 120_000, получает 10_000/мес × 12 = 120_000 → IRR > 0 (деньги вернулись без дисконта)
-    const distributions = Array<number>(12).fill(10_000)
-    const irr = calcInvestorIRR(120_000, 0, distributions, 0)
-    expect(irr).toBeGreaterThanOrEqual(0)
+  it('ежемесячные distributions суммарно равны emission → IRR ≥ 0', () => {
+    const roll = makeRange(12)
+    roll[0] = makeRoll(2026, 1, { emissionInflow: 120_000 })
+    for (let i = 1; i <= 12; i++) {
+      const period = roll[i]!.period
+      roll[i] = makeRoll(period.year, period.month, { distributionOutflow: 10_000 })
+    }
+    expect(calcInvestorIRR(roll)).toBeGreaterThanOrEqual(0)
   })
 
-  it('upfrontFeeRate=0 и upfrontFeeRate=1 обрабатываются без ошибок', () => {
-    const d = Array<number>(1).fill(0)
-    expect(() => calcInvestorIRR(100_000, 0,   d, 100_000)).not.toThrow()
-    expect(() => calcInvestorIRR(100_000, 1.0, d, 100_000)).not.toThrow()
+  it('пустой cashRoll → 0', () => {
+    expect(calcInvestorIRR([])).toBe(0)
+  })
+
+  it('единственный период → 0 (нет смены знака для IRR)', () => {
+    const roll: MonthlyCashRoll[] = [
+      makeRoll(2026, 1, { emissionInflow: 100_000, cashEnd: 100_000 }),
+    ]
+    // при одном периоде flow = emissionInflow + cashEnd (поскольку это и t=0, и t=last):
+    // первая ветка возвращает −(emission+upfront) → −100_000, IRR не определён
+    expect(calcInvestorIRR(roll)).toBe(0)
   })
 })
 

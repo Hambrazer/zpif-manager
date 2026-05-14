@@ -1,8 +1,9 @@
-import { type PropertyType } from '@prisma/client'
+import { type PropertyType, type TerminalType } from '@prisma/client'
 import { prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/utils/auth'
 
 const VALID_PROPERTY_TYPES = new Set<PropertyType>(['OFFICE', 'WAREHOUSE', 'RETAIL', 'MIXED', 'RESIDENTIAL'])
+const VALID_TERMINAL_TYPES = new Set<TerminalType>(['EXIT_CAP_RATE', 'GORDON'])
 
 export async function GET(req: Request) {
   const authError = await requireAuth()
@@ -52,6 +53,14 @@ export async function POST(req: Request) {
       return Response.json({ error: 'Некорректные данные' }, { status: 400 })
     }
 
+    const terminalType = VALID_TERMINAL_TYPES.has(b['terminalType'] as TerminalType)
+      ? (b['terminalType'] as TerminalType)
+      : undefined // undefined → схема подставит дефолт EXIT_CAP_RATE
+
+    const projectionYears = typeof b['projectionYears'] === 'number' && b['projectionYears'] > 0
+      ? Math.trunc(b['projectionYears'])
+      : undefined // undefined → схема подставит дефолт 10
+
     const property = await prisma.property.create({
       data: {
         fundId: b['fundId'] as string,
@@ -71,6 +80,9 @@ export async function POST(req: Request) {
         saleDate: typeof b['saleDate'] === 'string' ? new Date(b['saleDate']) : null,
         exitCapRate: typeof b['exitCapRate'] === 'number' ? b['exitCapRate'] : null,
         wacc: b['wacc'] as number,
+        ...(projectionYears !== undefined ? { projectionYears } : {}),
+        ...(terminalType !== undefined ? { terminalType } : {}),
+        gordonGrowthRate: typeof b['gordonGrowthRate'] === 'number' ? b['gordonGrowthRate'] : null,
       },
     })
 
