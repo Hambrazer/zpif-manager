@@ -101,17 +101,15 @@ export type TenantCashflow = {
 
 export type MonthlyCashflow = {
   period: MonthlyPeriod
-  gri: number                                   // Gross Rental Income (только аренда, до вакансии)
-  vacancy: number                               // потери от вакансии (на аренду)
-  nri: number                                   // Net Rental Income = gri - vacancy
-  opexReimbursementTotal: number               // суммарное возмещение OPEX от арендаторов (нетто)
-  opex: number                                  // OPEX (opexRate × rentableArea / 12, индексируется)
+  totalIncome: number                           // суммарный доход = Σ rentIncome + Σ opexReimbursement
+  opexReimbursementTotal: number                // суммарное возмещение OPEX от арендаторов
+  opex: number                                  // OPEX (opexRate × rentableArea / 12)
   propertyTax: number                           // налог на имущество, ₽/мес
   landTax: number                               // налог на ЗУ, ₽/мес
   maintenance: number                           // эксплуатационные расходы, ₽/мес
   capex: number                                 // CAPEX
-  noi: number                                   // Net Operating Income
-  fcf: number                                   // Free Cash Flow = noi - capex
+  noi: number                                   // Net Operating Income = totalIncome − расходы
+  fcf: number                                   // Free Cash Flow = noi − capex
   tenants: TenantCashflow[]                     // детализация по арендаторам
 }
 

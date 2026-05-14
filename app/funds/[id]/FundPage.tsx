@@ -66,9 +66,7 @@ function aggregatePropertyCashflows(
     const agg = { ...baseCf, tenants: [...baseCf.tenants] }
     for (let j = 1; j < values.length; j++) {
       const cf = values[j]![i]!
-      agg.gri += cf.gri
-      agg.vacancy += cf.vacancy
-      agg.nri += cf.nri
+      agg.totalIncome += cf.totalIncome
       agg.opexReimbursementTotal += cf.opexReimbursementTotal
       agg.opex += cf.opex
       agg.propertyTax += cf.propertyTax

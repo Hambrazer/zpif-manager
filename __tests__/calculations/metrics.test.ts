@@ -21,7 +21,7 @@ function makeCF(
   const opex = noi < 0 ? -noi : 0
   return {
     period: { year, month },
-    gri: noi + opex, vacancy: 0, nri: noi + opex,
+    totalIncome: noi + opex,
     opexReimbursementTotal: 0,
     opex, propertyTax: 0, landTax: 0, maintenance: 0,
     capex: 0, noi, fcf,
@@ -114,21 +114,19 @@ describe('calcFundCashflow', () => {
     expect(result[1]!.period).toEqual(feb2024)
   })
 
-  it('GRI, vacancy, NRI, opex, capex агрегируются из двух объектов', () => {
+  it('totalIncome, opex, capex агрегируются из двух объектов', () => {
     const cf1: MonthlyCashflow = {
-      period: jan2024, gri: 100, vacancy: 10, nri: 90,
+      period: jan2024, totalIncome: 90,
       opexReimbursementTotal: 0, opex: 20, propertyTax: 0, landTax: 0, maintenance: 0,
       capex: 5, noi: 65, fcf: 65, tenants: [],
     }
     const cf2: MonthlyCashflow = {
-      period: jan2024, gri: 200, vacancy: 0, nri: 200,
+      period: jan2024, totalIncome: 200,
       opexReimbursementTotal: 0, opex: 30, propertyTax: 0, landTax: 0, maintenance: 0,
       capex: 0, noi: 170, fcf: 170, tenants: [],
     }
     const result = calcFundCashflow([[cf1], [cf2]], 0, [], [jan2024])
-    expect(result[0]!.gri).toBeCloseTo(300, 2)
-    expect(result[0]!.vacancy).toBeCloseTo(10, 2)
-    expect(result[0]!.nri).toBeCloseTo(290, 2)
+    expect(result[0]!.totalIncome).toBeCloseTo(290, 2)
     expect(result[0]!.opex).toBeCloseTo(50, 2)
     expect(result[0]!.capex).toBeCloseTo(5, 2)
     expect(result[0]!.noi).toBeCloseTo(235, 2)

@@ -10,7 +10,7 @@ function periodKey(p: MonthlyPeriod): string {
 }
 
 type PeriodAggregate = {
-  gri: number; vacancy: number; nri: number
+  totalIncome: number
   opexReimbursementTotal: number
   opex: number; propertyTax: number; landTax: number; maintenance: number
   capex: number; noi: number
@@ -18,7 +18,7 @@ type PeriodAggregate = {
 
 function zeroAggregate(): PeriodAggregate {
   return {
-    gri: 0, vacancy: 0, nri: 0,
+    totalIncome: 0,
     opexReimbursementTotal: 0,
     opex: 0, propertyTax: 0, landTax: 0, maintenance: 0,
     capex: 0, noi: 0,
@@ -53,9 +53,7 @@ export function calcFundCashflow(
     for (const cf of propCF) {
       const k = periodKey(cf.period)
       const agg = aggMap.get(k) ?? zeroAggregate()
-      agg.gri                    += cf.gri
-      agg.vacancy                += cf.vacancy
-      agg.nri                    += cf.nri
+      agg.totalIncome            += cf.totalIncome
       agg.opexReimbursementTotal += cf.opexReimbursementTotal
       agg.opex                   += cf.opex
       agg.propertyTax            += cf.propertyTax
@@ -76,7 +74,7 @@ export function calcFundCashflow(
     const fcf = agg.noi - agg.capex - fundLevelCosts
     return {
       period,
-      gri: agg.gri, vacancy: agg.vacancy, nri: agg.nri,
+      totalIncome: agg.totalIncome,
       opexReimbursementTotal: agg.opexReimbursementTotal,
       opex: agg.opex, propertyTax: agg.propertyTax,
       landTax: agg.landTax, maintenance: agg.maintenance,

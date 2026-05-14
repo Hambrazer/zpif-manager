@@ -42,26 +42,18 @@ const jan2025: MonthlyPeriod = { year: 2025, month: 1 }
 // ─── Базовый расчёт доходов ───────────────────────────────────────────────────
 
 describe('базовый расчёт доходов (NONE-индексация, без вакансии)', () => {
-  // GRI = 100 × 10 000 / 12 = 83 333.33; vacancy = 0; nri = gri
+  // totalIncome = area × baseRent / 12 = 100 × 10 000 / 12 = 83 333.33
   const [row] = calcPropertyCashflow(baseProperty, [baseLease], [], [jan2024])!
 
-  it('GRI = area × baseRent / 12', () => {
-    expect(row!.gri).toBeCloseTo(83_333.33, 2)
-  })
-
-  it('vacancy = 0 (вакансия убрана)', () => {
-    expect(row!.vacancy).toBe(0)
-  })
-
-  it('nri = gri (нет вакансии)', () => {
-    expect(row!.nri).toBeCloseTo(83_333.33, 2)
+  it('totalIncome = area × baseRent / 12', () => {
+    expect(row!.totalIncome).toBeCloseTo(83_333.33, 2)
   })
 
   it('opexReimbursementTotal = 0 при нулевой ставке возмещения', () => {
     expect(row!.opexReimbursementTotal).toBe(0)
   })
 
-  it('noi = nri (при нулевых расходах объекта)', () => {
+  it('noi = totalIncome (при нулевых расходах объекта)', () => {
     expect(row!.noi).toBeCloseTo(83_333.33, 2)
   })
 
@@ -88,7 +80,7 @@ describe('возмещение OPEX арендатором', () => {
 
   it('noi включает opexReimbursementTotal (расходы объекта = 0)', () => {
     const [row] = calcPropertyCashflow(baseProperty, [leaseWithOpex], [], [jan2024])!
-    // nri = 83 333.33; opexReimbTotal = 10 000; расходы = 0
+    // totalIncome = 83 333.33; opexReimbTotal = 10 000; расходы = 0
     expect(row!.noi).toBeCloseTo(83_333.33 + 10_000, 2)
   })
 })
@@ -140,8 +132,8 @@ describe('расходы объекта', () => {
 
 // ─── NOI (интеграционный) ─────────────────────────────────────────────────────
 
-describe('NOI = nri + opexReimbursementTotal − opex − propertyTax − landTax − maintenance', () => {
-  // Аренда: 100 м², 12 000 ₽/м²/год → nri = 100 000
+describe('NOI = totalIncome − opex − propertyTax − landTax − maintenance', () => {
+  // Аренда: 100 м², 12 000 ₽/м²/год → rent = 100 000
   // Возмещение OPEX: 1 200 ₽/м²/год → opexReimbTotal = 10 000
   // opex: 500 × 1 200 / 12 = 50 000
   // maintenance: 500 × 600 / 12 = 25 000
@@ -226,12 +218,12 @@ describe('tenants: детализация по арендаторам', () => {
     expect(row!.tenants[0]!.opexReimbursement).toBeCloseTo(10_000, 2)
   })
 
-  it('два арендатора: tenants.length = 2, сумма rentIncome = nri', () => {
+  it('два арендатора: tenants.length = 2, Σ rentIncome = totalIncome при opexReimb=0', () => {
     const lease2: LeaseInput = { ...baseLease, id: 'l2', tenantName: 'Арендатор 2', area: 200 }
     const [row] = calcPropertyCashflow(baseProperty, [baseLease, lease2], [], [jan2024])!
     expect(row!.tenants).toHaveLength(2)
     const totalRentIncome = row!.tenants.reduce((s, t) => s + t.rentIncome, 0)
-    expect(totalRentIncome).toBeCloseTo(row!.nri, 2)
+    expect(totalRentIncome).toBeCloseTo(row!.totalIncome, 2)
   })
 
   it('истёкший договор не попадает в tenants', () => {
@@ -248,44 +240,44 @@ describe('пустые входные данные', () => {
     expect(calcPropertyCashflow(baseProperty, [baseLease], [], [])).toEqual([])
   })
 
-  it('gri = 0 при отсутствии договоров', () => {
+  it('totalIncome = 0 при отсутствии договоров', () => {
     const [row] = calcPropertyCashflow(baseProperty, [], [], [jan2024])!
-    expect(row!.gri).toBe(0)
+    expect(row!.totalIncome).toBe(0)
   })
 })
 
 // ─── Статус и активность договора ────────────────────────────────────────────
 
 describe('статус и активность договора', () => {
-  it('EXPIRED: договор не участвует в GRI', () => {
+  it('EXPIRED: договор не участвует в доходах', () => {
     const expired: LeaseInput = { ...baseLease, status: 'EXPIRED' }
     const [row] = calcPropertyCashflow(baseProperty, [expired], [], [jan2024])!
-    expect(row!.gri).toBe(0)
+    expect(row!.totalIncome).toBe(0)
   })
 
-  it('TERMINATING: договор участвует в GRI', () => {
+  it('TERMINATING: договор участвует в доходах', () => {
     const terminating: LeaseInput = { ...baseLease, status: 'TERMINATING' }
     const [row] = calcPropertyCashflow(baseProperty, [terminating], [], [jan2024])!
-    expect(row!.gri).toBeCloseTo(83_333.33, 2)
+    expect(row!.totalIncome).toBeCloseTo(83_333.33, 2)
   })
 
-  it('договор начинается в следующем месяце: gri = 0', () => {
+  it('договор начинается в следующем месяце: totalIncome = 0', () => {
     const future: LeaseInput = { ...baseLease, startDate: new Date('2024-02-01') }
     const [row] = calcPropertyCashflow(baseProperty, [future], [], [jan2024])!
-    expect(row!.gri).toBe(0)
+    expect(row!.totalIncome).toBe(0)
   })
 
-  it('договор закончился в прошлом месяце: gri = 0', () => {
+  it('договор закончился в прошлом месяце: totalIncome = 0', () => {
     const past: LeaseInput = { ...baseLease, endDate: new Date('2024-03-31') }
     const apr2024: MonthlyPeriod = { year: 2024, month: 4 }
     const [row] = calcPropertyCashflow(baseProperty, [past], [], [apr2024])!
-    expect(row!.gri).toBe(0)
+    expect(row!.totalIncome).toBe(0)
   })
 
   it('договор заканчивается внутри месяца: учитывается полностью', () => {
     const midMonth: LeaseInput = { ...baseLease, endDate: new Date('2024-01-15') }
     const [row] = calcPropertyCashflow(baseProperty, [midMonth], [], [jan2024])!
-    expect(row!.gri).toBeCloseTo(83_333.33, 2)
+    expect(row!.totalIncome).toBeCloseTo(83_333.33, 2)
   })
 })
 
@@ -296,20 +288,20 @@ describe('индексация базовой аренды', () => {
     const lease: LeaseInput = { ...baseLease, indexationType: 'FIXED', indexationRate: 0.05 }
     const [row] = calcPropertyCashflow(baseProperty, [lease], [], [jan2025])!
     // 100 × 10 500 / 12 = 87 500
-    expect(row!.gri).toBeCloseTo(87_500, 2)
+    expect(row!.totalIncome).toBeCloseTo(87_500, 2)
   })
 
   it('FIXED 5%: до первой годовщины (Dec 2024) ставка не изменилась', () => {
     const lease: LeaseInput = { ...baseLease, indexationType: 'FIXED', indexationRate: 0.05 }
     const [row] = calcPropertyCashflow(baseProperty, [lease], [], [dec2024])!
-    expect(row!.gri).toBeCloseTo(83_333.33, 2)
+    expect(row!.totalIncome).toBeCloseTo(83_333.33, 2)
   })
 
   it('CPI 7%: применяется с 1-й годовщины (Jan 2025)', () => {
     const lease: LeaseInput = { ...baseLease, indexationType: 'CPI' }
     const [row] = calcPropertyCashflow(baseProperty, [lease], [], [jan2025])!
     // 100 × 10 700 / 12 = 89 166.67
-    expect(row!.gri).toBeCloseTo(89_166.67, 2)
+    expect(row!.totalIncome).toBeCloseTo(89_166.67, 2)
   })
 })
 
@@ -377,7 +369,7 @@ describe('несколько периодов', () => {
 
   it('GRI одинаков во всех трёх месяцах (NONE-индексация)', () => {
     const result = calcPropertyCashflow(baseProperty, [baseLease], [], periods)
-    expect(result[0]!.gri).toBeCloseTo(result[1]!.gri, 2)
-    expect(result[1]!.gri).toBeCloseTo(result[2]!.gri, 2)
+    expect(result[0]!.totalIncome).toBeCloseTo(result[1]!.totalIncome, 2)
+    expect(result[1]!.totalIncome).toBeCloseTo(result[2]!.totalIncome, 2)
   })
 })

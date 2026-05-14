@@ -11,6 +11,9 @@ import { exportRentRollToExcel } from '@/lib/utils/exportRentRoll'
 import { CashflowChart } from '@/components/charts/CashflowChart'
 import { CashflowTable } from '@/components/tables/CashflowTable'
 import type { MonthlyCashflow } from '@/lib/types'
+// Обоснованное исключение из правила «расчёты только в lib/calculations»:
+// интерактивный пересчёт DCF при изменении exitCapRate выполняется на клиенте.
+import { calcDCF } from '@/lib/calculations/dcf'
 
 type PropertyType = 'OFFICE' | 'WAREHOUSE' | 'RETAIL' | 'MIXED' | 'RESIDENTIAL'
 type IndexationType = 'CPI' | 'FIXED' | 'NONE'
@@ -532,6 +535,12 @@ function CashflowTab({
   const [dcfLoading, setDcfLoading] = useState(true)
   const [dcfError, setDcfError]     = useState<string | null>(null)
 
+  // Интерактивный exitCapRate — локальный override без сохранения в БД (V3.5.2).
+  // null означает «нет override», эффективным считается значение из БД (prop exitCapRate).
+  const [localCapRate, setLocalCapRate]   = useState<number | null>(null)
+  const [capRateEdit, setCapRateEdit]     = useState(false)
+  const [capRateInput, setCapRateInput]   = useState('')
+
   useEffect(() => {
     setCfLoading(true)
     setCfError(null)
@@ -558,6 +567,48 @@ function CashflowTab({
       .catch(err => setDcfError(err instanceof Error ? err.message : 'Ошибка загрузки DCF'))
       .finally(() => setDcfLoading(false))
   }, [propertyId])
+
+  // Эффективный exitCapRate: либо локальное значение (override), либо из БД.
+  const effectiveCapRate = localCapRate ?? exitCapRate
+  const isOverridden = localCapRate !== null && localCapRate !== exitCapRate
+
+  // Локальный пересчёт DCF при изменении exitCapRate без сохранения в БД (V3.5.2).
+  // Перерасчёт активен только если: cashflows загружены, есть discountRate (WACC из API),
+  // и localCapRate отличается от значения из БД.
+  const localDcf = useMemo(() => {
+    if (cashflows.length === 0 || dcf === null) return null
+    if (localCapRate === null) return null
+    return calcDCF(cashflows, dcf.discountRate, localCapRate, acquisitionPrice ?? 0)
+  }, [cashflows, dcf, localCapRate, acquisitionPrice])
+
+  const effTerminalValue = localDcf?.terminalValue ?? dcf?.terminalValue
+  const effNpv           = localDcf?.npv           ?? dcf?.npv
+  const effIrr           = localDcf?.irr           ?? dcf?.irr
+
+  function enterCapEdit() {
+    const v = effectiveCapRate
+    setCapRateInput(v !== null ? String(+(v * 100).toFixed(2)) : '')
+    setCapRateEdit(true)
+  }
+
+  function commitCapEdit() {
+    const trimmed = capRateInput.trim()
+    if (trimmed === '') {
+      setLocalCapRate(null)
+    } else {
+      const parsed = parseFloat(trimmed)
+      if (!isNaN(parsed) && parsed > 0) {
+        const asFraction = parsed / 100
+        setLocalCapRate(asFraction === exitCapRate ? null : asFraction)
+      }
+    }
+    setCapRateEdit(false)
+  }
+
+  function resetCapRate() {
+    setLocalCapRate(null)
+    setCapRateEdit(false)
+  }
 
   // Расчётная стоимость продажи = NOI следующих 12 мес после saleDate / exitCapRate
   const salePrice = useMemo(() => {
@@ -614,6 +665,105 @@ function CashflowTab({
         </div>
       )}
 
+      {/* DCF блок */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <p className="text-sm font-semibold text-gray-900 mb-4">DCF-модель</p>
+        {dcfError ? (
+          <p className="text-sm text-red-500">{dcfError}</p>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              <DcfMetric
+                label="Горизонт, лет"
+                value={dcf ? String(dcf.projectionYears) : null}
+                loading={dcfLoading}
+              />
+              <DcfMetric
+                label="Ставка диск. (WACC)"
+                value={dcf ? formatPct(dcf.discountRate) : null}
+                loading={dcfLoading}
+              />
+
+              {/* Интерактивный Cap Rate выхода */}
+              <div className="bg-gray-50 rounded-lg px-4 py-3">
+                <p className="text-xs text-gray-400">Cap Rate выхода</p>
+                {capRateEdit ? (
+                  <input
+                    type="number"
+                    step="0.1"
+                    autoFocus
+                    value={capRateInput}
+                    onChange={e => setCapRateInput(e.target.value)}
+                    onBlur={commitCapEdit}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') commitCapEdit()
+                      if (e.key === 'Escape') setCapRateEdit(false)
+                    }}
+                    className="w-full bg-white border border-blue-400 rounded px-2 py-0.5 text-base font-semibold text-gray-900 mt-0.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                ) : (
+                  <p
+                    onClick={enterCapEdit}
+                    title="Кликните для редактирования"
+                    className={[
+                      'text-base font-semibold mt-0.5 cursor-pointer hover:underline',
+                      isOverridden ? 'text-blue-700' : 'text-gray-900',
+                    ].join(' ')}
+                  >
+                    {effectiveCapRate !== null ? formatPct(effectiveCapRate) : '—'}
+                  </p>
+                )}
+                {isOverridden && !capRateEdit && (
+                  <button
+                    type="button"
+                    onClick={resetCapRate}
+                    className="text-xs text-blue-600 hover:underline mt-1"
+                  >
+                    Сбросить
+                  </button>
+                )}
+              </div>
+
+              <DcfMetric
+                label="Терм. стоимость"
+                value={effTerminalValue !== undefined ? formatRub(effTerminalValue) : null}
+                loading={dcfLoading}
+              />
+              <DcfMetric
+                label="NPV"
+                value={effNpv !== undefined ? formatRub(effNpv) : null}
+                loading={dcfLoading}
+                {...(effNpv !== undefined ? { highlight: effNpv >= 0 ? 'positive' as const : 'negative' as const } : {})}
+              />
+              <DcfMetric
+                label="IRR"
+                value={effIrr !== undefined ? (effIrr > 0 ? formatPct(effIrr) : '—') : null}
+                loading={dcfLoading}
+                {...(effIrr === 0 ? { sublabel: 'нет цены приобр.' } : {})}
+              />
+            </div>
+
+            {(saleDate !== null || salePrice !== null || cfLoading) && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 border-t border-gray-100">
+                <DcfMetric
+                  label="Дата продажи"
+                  value={saleDate ? formatDate(saleDate) : '—'}
+                  loading={false}
+                />
+                <DcfMetric
+                  label="Расч. стоимость продажи"
+                  value={salePrice !== null ? formatRub(salePrice) : null}
+                  loading={cfLoading}
+                  {...(exitCapRate !== null
+                    ? { sublabel: `Exit Cap ${formatPct(exitCapRate)}` }
+                    : {})}
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* График NOI/FCF */}
       <div className="bg-white rounded-lg border border-gray-200 p-4">
         <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
@@ -643,64 +793,6 @@ function CashflowTab({
           <div className="py-12 text-center text-sm text-red-500">{cfError}</div>
         ) : (
           <CashflowTable cashflows={cashflows} variant="property" />
-        )}
-      </div>
-
-      {/* DCF блок */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <p className="text-sm font-semibold text-gray-900 mb-4">DCF-модель</p>
-        {dcfError ? (
-          <p className="text-sm text-red-500">{dcfError}</p>
-        ) : (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-              <DcfMetric
-                label="Горизонт, лет"
-                value={dcf ? String(dcf.projectionYears) : null}
-                loading={dcfLoading}
-              />
-              <DcfMetric
-                label="Ставка диск. (WACC)"
-                value={dcf ? formatPct(dcf.discountRate) : null}
-                loading={dcfLoading}
-              />
-              <DcfMetric
-                label="Терм. стоимость"
-                value={dcf ? formatRub(dcf.terminalValue) : null}
-                loading={dcfLoading}
-              />
-              <DcfMetric
-                label="NPV"
-                value={dcf ? formatRub(dcf.npv) : null}
-                loading={dcfLoading}
-                {...(dcf ? { highlight: dcf.npv >= 0 ? 'positive' as const : 'negative' as const } : {})}
-              />
-              <DcfMetric
-                label="IRR"
-                value={dcf ? (dcf.irr > 0 ? formatPct(dcf.irr) : '—') : null}
-                loading={dcfLoading}
-                {...(dcf && dcf.irr === 0 ? { sublabel: 'нет цены приобр.' } : {})}
-              />
-            </div>
-
-            {(saleDate !== null || salePrice !== null || cfLoading) && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 border-t border-gray-100">
-                <DcfMetric
-                  label="Дата продажи"
-                  value={saleDate ? formatDate(saleDate) : '—'}
-                  loading={false}
-                />
-                <DcfMetric
-                  label="Расч. стоимость продажи"
-                  value={salePrice !== null ? formatRub(salePrice) : null}
-                  loading={cfLoading}
-                  {...(exitCapRate !== null
-                    ? { sublabel: `Exit Cap ${formatPct(exitCapRate)}` }
-                    : {})}
-                />
-              </div>
-            )}
-          </div>
         )}
       </div>
     </div>

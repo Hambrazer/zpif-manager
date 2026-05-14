@@ -83,7 +83,7 @@ export function calcPropertyCashflow(
     const key = periodKey(period)
     const periodEnd = lastDayOfMonth(period)
 
-    let gri = 0
+    let rentTotal = 0
     let opexReimbursementTotal = 0
     const tenants: TenantCashflow[] = []
 
@@ -101,7 +101,7 @@ export function calcPropertyCashflow(
         lease.indexationFrequency ?? null
       )
       const rentIncome = (lease.area * indexedRent) / 12
-      gri += rentIncome
+      rentTotal += rentIncome
 
       const indexedOpexReimb = calcIndexedRent(
         lease.opexReimbursementRate,
@@ -124,17 +124,14 @@ export function calcPropertyCashflow(
       })
     }
 
-    const vacancy = 0
-    const nri = gri
-    const noi = nri + opexReimbursementTotal - opex - propertyTax - landTax - maintenance
+    const totalIncome = rentTotal + opexReimbursementTotal
+    const noi = totalIncome - opex - propertyTax - landTax - maintenance
     const capexAmount = capexMap.get(key) ?? 0
     const fcf = noi - capexAmount
 
     return {
       period,
-      gri,
-      vacancy,
-      nri,
+      totalIncome,
       opexReimbursementTotal,
       opex,
       propertyTax,

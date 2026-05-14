@@ -85,38 +85,50 @@ function buildPropertyRows(cashflows: readonly MonthlyCashflow[]): RowSpec<Month
       if (!tenantMap.has(t.tenantId)) tenantMap.set(t.tenantId, t.tenantName)
     }
   }
+  const tenants = Array.from(tenantMap.entries())
 
-  const tenantRows: RowSpec<MonthlyCashflow>[] = []
-  for (const [id, name] of tenantMap) {
-    tenantRows.push({
-      key: `t-rent-${id}`,
-      kind: 'data',
-      label: `${name} — Аренда`,
-      indent: true,
-      getValue: cf => cf.tenants.find(t => t.tenantId === id)?.rentIncome ?? 0,
-    })
-    tenantRows.push({
-      key: `t-opex-${id}`,
-      kind: 'data',
-      label: `${name} — Возм. OPEX`,
-      indent: true,
-      getValue: cf => cf.tenants.find(t => t.tenantId === id)?.opexReimbursement ?? 0,
-    })
-  }
+  const sumRent = (cf: MonthlyCashflow): number =>
+    cf.tenants.reduce((s, t) => s + t.rentIncome, 0)
+  const sumOpexReimb = (cf: MonthlyCashflow): number =>
+    cf.tenants.reduce((s, t) => s + t.opexReimbursement, 0)
+  const sumExpenses = (cf: MonthlyCashflow): number =>
+    cf.opex + cf.propertyTax + cf.landTax + cf.maintenance + cf.capex
+
+  const rentChildren: RowSpec<MonthlyCashflow>[] = tenants.map(([id, name]) => ({
+    key: `rent-${id}`,
+    kind: 'data',
+    label: name,
+    indent: true,
+    getValue: cf => cf.tenants.find(t => t.tenantId === id)?.rentIncome ?? 0,
+  }))
+  const opexReimbChildren: RowSpec<MonthlyCashflow>[] = tenants.map(([id, name]) => ({
+    key: `opexreimb-${id}`,
+    kind: 'data',
+    label: name,
+    indent: true,
+    getValue: cf => cf.tenants.find(t => t.tenantId === id)?.opexReimbursement ?? 0,
+  }))
 
   return [
-    ...tenantRows,
-    { key: 'gri',         kind: 'data', label: 'GRI',                getValue: cf => cf.gri },
-    { key: 'vacancy',     kind: 'data', label: 'Вакансия',           isExpense: true, getValue: cf => cf.vacancy },
-    { key: 'nri',         kind: 'data', label: 'NRI',                getValue: cf => cf.nri },
-    { key: 'opexReimb',   kind: 'data', label: 'Возмещение OPEX',    separator: true, getValue: cf => cf.opexReimbursementTotal },
-    { key: 'opex',        kind: 'data', label: 'OPEX',               isExpense: true, getValue: cf => cf.opex },
-    { key: 'propertyTax', kind: 'data', label: 'Налог на имущество', isExpense: true, getValue: cf => cf.propertyTax },
-    { key: 'landTax',     kind: 'data', label: 'Налог на ЗУ',        isExpense: true, getValue: cf => cf.landTax },
-    { key: 'maintenance', kind: 'data', label: 'Эксплуатация',       isExpense: true, getValue: cf => cf.maintenance },
-    { key: 'capex',       kind: 'data', label: 'CAPEX',              isExpense: true, separator: true, getValue: cf => cf.capex },
-    { key: 'noi',         kind: 'subtotal', label: 'NOI',            bold: true, getValue: cf => cf.noi },
-    { key: 'fcf',         kind: 'subtotal', label: 'FCF',            bold: true, separator: true, getValue: cf => cf.fcf },
+    { key: 'sec-income',       kind: 'sectionHeader', label: 'ДОХОДЫ' },
+    { key: 'rent-parent',      kind: 'subtotal', label: 'Аренда',          bold: true, getValue: sumRent },
+    ...rentChildren,
+    { key: 'opexreimb-parent', kind: 'subtotal', label: 'Возмещение OPEX', bold: true, getValue: sumOpexReimb },
+    ...opexReimbChildren,
+    { key: 'total-income',     kind: 'subtotal', label: 'Итого доходы',    bold: true, separator: true,
+      getValue: cf => sumRent(cf) + sumOpexReimb(cf) },
+
+    { key: 'sec-expenses',     kind: 'sectionHeader', label: 'РАСХОДЫ' },
+    { key: 'opex',             kind: 'data', label: 'OPEX',               isExpense: true, getValue: cf => cf.opex },
+    { key: 'propertyTax',      kind: 'data', label: 'Налог на имущество', isExpense: true, getValue: cf => cf.propertyTax },
+    { key: 'landTax',          kind: 'data', label: 'Налог на ЗУ',        isExpense: true, getValue: cf => cf.landTax },
+    { key: 'maintenance',      kind: 'data', label: 'Эксплуатация',       isExpense: true, getValue: cf => cf.maintenance },
+    { key: 'capex',            kind: 'data', label: 'CAPEX',              isExpense: true, getValue: cf => cf.capex },
+    { key: 'total-expenses',   kind: 'subtotal', label: 'Итого расходы',  bold: true, isExpense: true, separator: true,
+      getValue: sumExpenses },
+
+    { key: 'noi', kind: 'subtotal', label: 'NOI', bold: true, colored: true, getValue: cf => cf.noi },
+    { key: 'fcf', kind: 'subtotal', label: 'FCF', bold: true, colored: true, separator: true, getValue: cf => cf.fcf },
   ]
 }
 
@@ -260,7 +272,7 @@ function TableInner<T extends { period: MonthlyPeriod }>({ items, rows }: TableP
                     'sticky left-0 z-10 px-4 py-2 text-left text-xs whitespace-nowrap border-r border-gray-200',
                     stripeBg,
                     row.bold ? 'font-semibold text-gray-900' : 'text-gray-600',
-                    row.indent ? 'pl-7' : '',
+                    row.indent ? 'pl-8' : '',
                   ].join(' ')}
                 >
                   {row.label}

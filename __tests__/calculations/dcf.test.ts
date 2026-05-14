@@ -4,7 +4,7 @@ import type { MonthlyCashflow } from '../../lib/types'
 function makeCF(year: number, month: number, noi: number, fcf: number): MonthlyCashflow {
   return {
     period: { year, month },
-    gri: 0, vacancy: 0, nri: 0,
+    totalIncome: 0,
     opexReimbursementTotal: 0,
     opex: 0, propertyTax: 0, landTax: 0, maintenance: 0,
     capex: 0, noi, fcf,
