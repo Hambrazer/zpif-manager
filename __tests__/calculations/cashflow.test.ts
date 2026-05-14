@@ -2,6 +2,7 @@ import { calcPropertyCashflow, type PropertyExpenseInput } from '../../lib/calcu
 import type {
   LeaseInput,
   CapexInput,
+  CapexReserveInput,
   MonthlyPeriod,
 } from '../../lib/types'
 
@@ -188,6 +189,66 @@ describe('CAPEX', () => {
     const capex2: CapexInput = { id: 'c2', amount: 300_000, plannedDate: new Date('2024-06-01') }
     const [row] = calcPropertyCashflow(baseProperty, [], [capex, capex2], [jun2024])!
     expect(row!.capex).toBe(800_000)
+  })
+})
+
+// ─── Периодический резерв CAPEX ──────────────────────────────────────────────
+
+describe('периодический резерв CAPEX (CapexReserve)', () => {
+  const reserve: CapexReserveInput = {
+    ratePerSqm: 240,                              // 500 × 240 / 12 = 10 000/мес
+    startDate: new Date('2024-01-01'),
+    indexationType: 'NONE',
+    indexationRate: null,
+  }
+
+  it('NONE-индексация: capex = rentableArea × rate / 12', () => {
+    const [row] = calcPropertyCashflow(baseProperty, [], [], [jan2024], reserve)!
+    expect(row!.capex).toBeCloseTo(10_000, 2)
+  })
+
+  it('Резерв до startDate не начисляется', () => {
+    const future: CapexReserveInput = { ...reserve, startDate: new Date('2024-06-01') }
+    const [row] = calcPropertyCashflow(baseProperty, [], [], [jan2024], future)!
+    expect(row!.capex).toBe(0)
+  })
+
+  it('Разовый CAPEX суммируется поверх резерва', () => {
+    const itm: CapexInput = { id: 'c1', amount: 500_000, plannedDate: new Date('2024-01-15') }
+    const [row] = calcPropertyCashflow(baseProperty, [], [itm], [jan2024], reserve)!
+    expect(row!.capex).toBeCloseTo(510_000, 2)
+  })
+
+  it('FIXED 5%: до 1-й годовщины резерв = базовой ставке', () => {
+    const r: CapexReserveInput = { ...reserve, indexationType: 'FIXED', indexationRate: 0.05 }
+    const [row] = calcPropertyCashflow(baseProperty, [], [], [dec2024], r)!
+    expect(row!.capex).toBeCloseTo(10_000, 2)
+  })
+
+  it('FIXED 5%: с 1-й годовщины (Jan 2025) резерв = 10 500', () => {
+    const r: CapexReserveInput = { ...reserve, indexationType: 'FIXED', indexationRate: 0.05 }
+    const [row] = calcPropertyCashflow(baseProperty, [], [], [jan2025], r)!
+    // 500 × (240 × 1.05) / 12 = 10 500
+    expect(row!.capex).toBeCloseTo(10_500, 2)
+  })
+
+  it('CPI 7%: с 1-й годовщины резерв учитывает ИПЦ', () => {
+    const r: CapexReserveInput = { ...reserve, indexationType: 'CPI', indexationRate: null }
+    const [row] = calcPropertyCashflow(baseProperty, [], [], [jan2025], r)!
+    // 500 × (240 × 1.07) / 12 = 10 700
+    expect(row!.capex).toBeCloseTo(10_700, 2)
+  })
+
+  it('FCF = NOI − (CapexItem + CapexReserve)', () => {
+    const itm: CapexInput = { id: 'c1', amount: 500_000, plannedDate: new Date('2024-01-15') }
+    const [row] = calcPropertyCashflow(baseProperty, [baseLease], [itm], [jan2024], reserve)!
+    expect(row!.fcf).toBeCloseTo(row!.noi - 510_000, 2)
+  })
+
+  it('Без резерва (capexReserve = null): поведение прежнее', () => {
+    const [withNull] = calcPropertyCashflow(baseProperty, [], [], [jan2024], null)!
+    const [withoutArg] = calcPropertyCashflow(baseProperty, [], [], [jan2024])!
+    expect(withNull!.capex).toBe(withoutArg!.capex)
   })
 })
 

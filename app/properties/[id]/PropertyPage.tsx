@@ -220,7 +220,7 @@ export function PropertyPage({ property }: { property: PropertyData }) {
             {activeTab === 'expenses' && (
               <ExpensesTab cashflows={cashflows} loading={cfLoading} error={cfError} />
             )}
-            {activeTab === 'capex' && <PlaceholderTab text="Раздел CAPEX будет добавлен в следующей версии." />}
+            {activeTab === 'capex' && <CapexTab propertyId={property.id} />}
             {activeTab === 'debt' && <PlaceholderTab text="Долг на уровне объекта будет добавлен в следующей версии." />}
             {activeTab === 'cashflow' && (
               <CashflowTab
@@ -1374,6 +1374,611 @@ function ExpensesTab({
             })}
           </tbody>
         </table>
+      </div>
+    </div>
+  )
+}
+
+// ─── Вкладка «CAPEX» (V3.7.1) ────────────────────────────────────────────────
+
+type CapexMode = 'items' | 'reserve'
+
+type CapexItemRow = {
+  id: string
+  name: string
+  amount: number
+  plannedDate: string
+  notes: string | null
+}
+
+type CapexReserveRow = {
+  id: string
+  propertyId: string
+  ratePerSqm: number
+  startDate: string
+  indexationType: IndexationType
+  indexationRate: number | null
+}
+
+const cInputCls = 'w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50'
+const cLabelCls = 'block text-xs font-medium text-gray-600 mb-0.5'
+
+function CapexTab({ propertyId }: { propertyId: string }) {
+  const [mode, setMode] = useState<CapexMode>('items')
+
+  return (
+    <div className="space-y-4">
+      <div className="inline-flex rounded-md border border-gray-200 p-0.5 bg-white">
+        {([
+          { id: 'items',   label: 'Разовые затраты'      },
+          { id: 'reserve', label: 'Периодический резерв' },
+        ] as { id: CapexMode; label: string }[]).map(opt => (
+          <button
+            key={opt.id}
+            onClick={() => setMode(opt.id)}
+            className={`px-4 py-1.5 text-sm font-medium rounded transition-colors ${
+              mode === opt.id
+                ? 'bg-blue-600 text-white'
+                : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {mode === 'items'   && <CapexItemsBlock propertyId={propertyId} />}
+      {mode === 'reserve' && <CapexReserveBlock propertyId={propertyId} />}
+    </div>
+  )
+}
+
+// ─── Режим: Разовые затраты (inline-таблица, Вариант A) ──────────────────────
+
+type CapexItemForm = {
+  name: string
+  amount: string
+  plannedDate: string
+  notes: string
+}
+
+const emptyCapexItemForm: CapexItemForm = {
+  name: '',
+  amount: '',
+  plannedDate: '',
+  notes: '',
+}
+
+function rowToForm(row: CapexItemRow): CapexItemForm {
+  return {
+    name: row.name,
+    amount: String(row.amount),
+    plannedDate: row.plannedDate.slice(0, 10),
+    notes: row.notes ?? '',
+  }
+}
+
+function CapexItemsBlock({ propertyId }: { propertyId: string }) {
+  const [items, setItems]               = useState<CapexItemRow[]>([])
+  const [loading, setLoading]           = useState(true)
+  const [loadError, setLoadError]       = useState<string | null>(null)
+  // editingId: 'new' для новой строки, id для редактируемой существующей, null — нет редактирования
+  const [editingId, setEditingId]       = useState<string | null>(null)
+  const [form, setForm]                 = useState<CapexItemForm>(emptyCapexItemForm)
+  const [saving, setSaving]             = useState(false)
+  const [saveError, setSaveError]       = useState<string | null>(null)
+  const [deletingId, setDeletingId]     = useState<string | null>(null)
+
+  function load() {
+    setLoading(true)
+    setLoadError(null)
+    fetch(`/api/capex?propertyId=${propertyId}`)
+      .then(async res => {
+        const json = await res.json() as { data?: CapexItemRow[]; error?: string }
+        if (!res.ok) throw new Error(json.error ?? 'Ошибка загрузки')
+        setItems(json.data ?? [])
+      })
+      .catch(err => setLoadError(err instanceof Error ? err.message : 'Ошибка загрузки'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(load, [propertyId])
+
+  function startAdd() {
+    setForm(emptyCapexItemForm)
+    setEditingId('new')
+    setSaveError(null)
+  }
+
+  function startEdit(row: CapexItemRow) {
+    setForm(rowToForm(row))
+    setEditingId(row.id)
+    setSaveError(null)
+  }
+
+  function cancel() {
+    setEditingId(null)
+    setSaveError(null)
+  }
+
+  function setField<K extends keyof CapexItemForm>(field: K, value: CapexItemForm[K]) {
+    setForm(prev => ({ ...prev, [field]: value }))
+  }
+
+  async function save() {
+    setSaveError(null)
+
+    const amount = parseFloat(form.amount)
+    if (!form.name.trim())            { setSaveError('Укажите наименование'); return }
+    if (isNaN(amount) || amount < 0)  { setSaveError('Укажите корректную сумму'); return }
+    if (!form.plannedDate)            { setSaveError('Укажите дату'); return }
+
+    const isNew = editingId === 'new'
+    const body = {
+      ...(isNew ? { propertyId } : {}),
+      name: form.name.trim(),
+      amount,
+      plannedDate: form.plannedDate,
+      notes: form.notes.trim() === '' ? null : form.notes.trim(),
+    }
+
+    setSaving(true)
+    try {
+      const url = isNew ? '/api/capex' : `/api/capex/${editingId}`
+      const method = isNew ? 'POST' : 'PUT'
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const json = await res.json() as { error?: string }
+        setSaveError(json.error ?? 'Ошибка сохранения')
+        return
+      }
+      setEditingId(null)
+      load()
+    } catch {
+      setSaveError('Ошибка сети')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function remove(row: CapexItemRow) {
+    if (!window.confirm(`Удалить позицию «${row.name}»?`)) return
+    setDeletingId(row.id)
+    try {
+      const res = await fetch(`/api/capex/${row.id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const json = await res.json() as { error?: string }
+        alert(json.error ?? 'Ошибка удаления')
+        return
+      }
+      if (editingId === row.id) setEditingId(null)
+      load()
+    } catch {
+      alert('Ошибка сети')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-gray-400">
+          Разовые позиции CAPEX — конкретная сумма в конкретную дату.
+        </p>
+        <button
+          onClick={startAdd}
+          disabled={editingId === 'new'}
+          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          + Добавить
+        </button>
+      </div>
+
+      {loadError && <p className="text-sm text-red-500">{loadError}</p>}
+
+      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 font-medium uppercase tracking-wide">
+                <th className="text-left px-4 py-3">Наименование</th>
+                <th className="text-left px-4 py-3 w-36">Дата</th>
+                <th className="text-right px-4 py-3 w-40">Сумма, ₽</th>
+                <th className="text-left px-4 py-3">Примечание</th>
+                <th className="px-4 py-3 w-48 text-right">Действия</th>
+              </tr>
+            </thead>
+            <tbody>
+              {editingId === 'new' && (
+                <CapexItemEditRow
+                  form={form}
+                  setField={setField}
+                  saving={saving}
+                  saveError={saveError}
+                  onSave={() => void save()}
+                  onCancel={cancel}
+                />
+              )}
+
+              {loading && (
+                <tr><td colSpan={5} className="py-12 text-center text-sm text-gray-400">Загрузка…</td></tr>
+              )}
+
+              {!loading && items.length === 0 && editingId !== 'new' && (
+                <tr>
+                  <td colSpan={5} className="py-12 text-center text-gray-400">
+                    Разовых позиций CAPEX нет — нажмите «+ Добавить»
+                  </td>
+                </tr>
+              )}
+
+              {items.map(row => {
+                const isEdit = editingId === row.id
+                const isDeleting = deletingId === row.id
+                if (isEdit) {
+                  return (
+                    <CapexItemEditRow
+                      key={row.id}
+                      form={form}
+                      setField={setField}
+                      saving={saving}
+                      saveError={saveError}
+                      onSave={() => void save()}
+                      onCancel={cancel}
+                      onDelete={() => void remove(row)}
+                      isDeleting={isDeleting}
+                    />
+                  )
+                }
+                return (
+                  <tr
+                    key={row.id}
+                    className={`border-b border-gray-100 transition-colors ${isDeleting ? 'opacity-40' : 'hover:bg-gray-50'}`}
+                  >
+                    <td className="px-4 py-3 text-gray-900">{row.name}</td>
+                    <td className="px-4 py-3 text-gray-600">{formatDate(row.plannedDate)}</td>
+                    <td className="px-4 py-3 text-right text-gray-900 tabular-nums">
+                      {formatRub(row.amount)}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">{row.notes ?? '—'}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => startEdit(row)}
+                        disabled={editingId !== null}
+                        className="text-xs text-blue-600 hover:underline mr-3 disabled:opacity-30 disabled:no-underline"
+                      >
+                        Изменить
+                      </button>
+                      <button
+                        onClick={() => void remove(row)}
+                        disabled={editingId !== null || isDeleting}
+                        className="text-xs text-red-600 hover:underline disabled:opacity-30 disabled:no-underline"
+                      >
+                        Удалить
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CapexItemEditRow({
+  form,
+  setField,
+  saving,
+  saveError,
+  onSave,
+  onCancel,
+  onDelete,
+  isDeleting,
+}: {
+  form: CapexItemForm
+  setField: <K extends keyof CapexItemForm>(field: K, value: CapexItemForm[K]) => void
+  saving: boolean
+  saveError: string | null
+  onSave: () => void
+  onCancel: () => void
+  onDelete?: () => void
+  isDeleting?: boolean
+}) {
+  return (
+    <>
+      <tr className="bg-blue-50/30 border-b border-gray-100">
+        <td className="px-4 py-2">
+          <input
+            type="text"
+            value={form.name}
+            onChange={e => setField('name', e.target.value)}
+            className={cInputCls}
+            disabled={saving}
+            placeholder="Например: ремонт кровли"
+          />
+        </td>
+        <td className="px-4 py-2">
+          <input
+            type="date"
+            value={form.plannedDate}
+            onChange={e => setField('plannedDate', e.target.value)}
+            className={cInputCls}
+            disabled={saving}
+          />
+        </td>
+        <td className="px-4 py-2">
+          <input
+            type="number"
+            value={form.amount}
+            onChange={e => setField('amount', e.target.value)}
+            min="0"
+            step="1"
+            className={cInputCls + ' text-right'}
+            disabled={saving}
+          />
+        </td>
+        <td className="px-4 py-2">
+          <input
+            type="text"
+            value={form.notes}
+            onChange={e => setField('notes', e.target.value)}
+            className={cInputCls}
+            disabled={saving}
+            placeholder="Опционально"
+          />
+        </td>
+        <td className="px-4 py-2 text-right whitespace-nowrap">
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saving}
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 mr-1.5"
+          >
+            {saving ? '…' : 'Сохранить'}
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={saving}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Отмена
+          </button>
+          {onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={saving || isDeleting}
+              className="ml-1.5 rounded-md border border-red-200 text-red-600 px-3 py-1.5 text-xs font-medium hover:bg-red-50 disabled:opacity-50"
+            >
+              {isDeleting ? '…' : 'Удалить'}
+            </button>
+          )}
+        </td>
+      </tr>
+      {saveError && (
+        <tr className="bg-blue-50/30 border-b border-gray-100">
+          <td colSpan={5} className="px-4 pb-2 text-sm text-red-600">{saveError}</td>
+        </tr>
+      )}
+    </>
+  )
+}
+
+// ─── Режим: Периодический резерв ─────────────────────────────────────────────
+
+type CapexReserveForm = {
+  ratePerSqm: string
+  startDate: string
+  indexationType: IndexationType
+  indexationRate: string
+}
+
+const emptyReserveForm: CapexReserveForm = {
+  ratePerSqm: '',
+  startDate: '',
+  indexationType: 'NONE',
+  indexationRate: '',
+}
+
+function reserveToForm(row: CapexReserveRow): CapexReserveForm {
+  return {
+    ratePerSqm: String(row.ratePerSqm),
+    startDate: row.startDate.slice(0, 10),
+    indexationType: row.indexationType,
+    indexationRate: row.indexationRate != null ? String(+(row.indexationRate * 100).toFixed(4)) : '',
+  }
+}
+
+function CapexReserveBlock({ propertyId }: { propertyId: string }) {
+  const [reserve, setReserve]       = useState<CapexReserveRow | null>(null)
+  const [form, setForm]             = useState<CapexReserveForm>(emptyReserveForm)
+  const [loading, setLoading]       = useState(true)
+  const [loadError, setLoadError]   = useState<string | null>(null)
+  const [saving, setSaving]         = useState(false)
+  const [saveError, setSaveError]   = useState<string | null>(null)
+  const [okMessage, setOkMessage]   = useState<string | null>(null)
+
+  function load() {
+    setLoading(true)
+    setLoadError(null)
+    fetch(`/api/properties/${propertyId}/capex-reserve`)
+      .then(async res => {
+        const json = await res.json() as { data?: CapexReserveRow | null; error?: string }
+        if (!res.ok) throw new Error(json.error ?? 'Ошибка загрузки')
+        const row = json.data ?? null
+        setReserve(row)
+        setForm(row ? reserveToForm(row) : emptyReserveForm)
+      })
+      .catch(err => setLoadError(err instanceof Error ? err.message : 'Ошибка загрузки'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(load, [propertyId])
+
+  function setField<K extends keyof CapexReserveForm>(field: K, value: CapexReserveForm[K]) {
+    setForm(prev => ({ ...prev, [field]: value }))
+    setOkMessage(null)
+  }
+
+  async function save() {
+    setSaveError(null)
+    setOkMessage(null)
+
+    const ratePerSqm = parseFloat(form.ratePerSqm)
+    if (isNaN(ratePerSqm) || ratePerSqm < 0) { setSaveError('Укажите ставку резерва ≥ 0'); return }
+    if (!form.startDate) { setSaveError('Укажите дату начала начисления'); return }
+
+    let indexationRate: number | null = null
+    if (form.indexationType === 'FIXED') {
+      const r = parseFloat(form.indexationRate)
+      if (isNaN(r) || r < 0) { setSaveError('Укажите ставку индексации'); return }
+      indexationRate = r / 100
+    }
+
+    setSaving(true)
+    try {
+      const res = await fetch(`/api/properties/${propertyId}/capex-reserve`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ratePerSqm,
+          startDate: form.startDate,
+          indexationType: form.indexationType,
+          indexationRate,
+        }),
+      })
+      if (!res.ok) {
+        const json = await res.json() as { error?: string }
+        setSaveError(json.error ?? 'Ошибка сохранения')
+        return
+      }
+      setOkMessage('Сохранено')
+      load()
+    } catch {
+      setSaveError('Ошибка сети')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm('Удалить периодический резерв CAPEX?')) return
+    setSaving(true)
+    setSaveError(null)
+    setOkMessage(null)
+    try {
+      const res = await fetch(`/api/properties/${propertyId}/capex-reserve`, { method: 'DELETE' })
+      if (!res.ok) {
+        const json = await res.json() as { error?: string }
+        setSaveError(json.error ?? 'Ошибка удаления')
+        return
+      }
+      setReserve(null)
+      setForm(emptyReserveForm)
+    } catch {
+      setSaveError('Ошибка сети')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return <div className="py-12 text-center text-sm text-gray-400">Загрузка…</div>
+  }
+  if (loadError) {
+    return <div className="py-12 text-center text-sm text-red-500">{loadError}</div>
+  }
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-6 max-w-2xl">
+      <p className="text-xs text-gray-400 mb-4">
+        Резерв на капитальный ремонт — начисляется ежемесячно как area × ставка / 12,
+        с индексацией от даты начала начисления. Суммируется поверх разовых позиций.
+      </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label className={cLabelCls}>Ставка резерва, ₽/м²/год</label>
+          <input
+            type="number"
+            value={form.ratePerSqm}
+            onChange={e => setField('ratePerSqm', e.target.value)}
+            min="0"
+            step="1"
+            className={cInputCls}
+            disabled={saving}
+          />
+        </div>
+        <div>
+          <label className={cLabelCls}>Начало начисления</label>
+          <input
+            type="date"
+            value={form.startDate}
+            onChange={e => setField('startDate', e.target.value)}
+            className={cInputCls}
+            disabled={saving}
+          />
+        </div>
+        <div>
+          <label className={cLabelCls}>Индексация резерва</label>
+          <select
+            value={form.indexationType}
+            onChange={e => setField('indexationType', e.target.value as IndexationType)}
+            className={cInputCls + ' bg-white'}
+            disabled={saving}
+          >
+            <option value="NONE">Нет</option>
+            <option value="FIXED">Фиксированная</option>
+            <option value="CPI">ИПЦ</option>
+          </select>
+        </div>
+        {form.indexationType === 'FIXED' && (
+          <div>
+            <label className={cLabelCls}>Ставка индексации, %</label>
+            <input
+              type="number"
+              value={form.indexationRate}
+              onChange={e => setField('indexationRate', e.target.value)}
+              min="0"
+              step="0.01"
+              className={cInputCls}
+              disabled={saving}
+            />
+          </div>
+        )}
+      </div>
+
+      {saveError && <p className="text-sm text-red-600 mt-3">{saveError}</p>}
+      {okMessage && <p className="text-sm text-green-600 mt-3">{okMessage}</p>}
+
+      <div className="flex gap-3 mt-5 pt-4 border-t border-gray-100">
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={saving}
+          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {saving ? 'Сохранение…' : reserve ? 'Сохранить изменения' : 'Создать резерв'}
+        </button>
+        {reserve && (
+          <button
+            type="button"
+            onClick={() => void remove()}
+            disabled={saving}
+            className="ml-auto rounded-md border border-red-200 text-red-600 px-4 py-2 text-sm font-medium hover:bg-red-50 disabled:opacity-50"
+          >
+            Удалить резерв
+          </button>
+        )}
       </div>
     </div>
   )

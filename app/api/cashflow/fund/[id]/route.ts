@@ -5,6 +5,7 @@ import { calcFundCashRoll, generatePeriods, type PropertyCFInput } from '@/lib/c
 import type {
   LeaseInput,
   CapexInput,
+  CapexReserveInput,
   DebtInput,
   FundInput,
   DistributionPeriodicity,
@@ -28,6 +29,7 @@ export async function GET(_req: Request, { params }: Params) {
           include: {
             leaseContracts: { include: { stepRents: true } },
             capexItems: true,
+            capexReserve: true,
           },
         },
         fundDebts: true,
@@ -82,7 +84,16 @@ export async function GET(_req: Request, { params }: Params) {
         plannedDate: c.plannedDate,
       }))
 
-      const cashflows = calcPropertyCashflow(propertyInput, leases, capexItems, periods)
+      const capexReserve: CapexReserveInput | null = property.capexReserve
+        ? {
+            ratePerSqm: property.capexReserve.ratePerSqm,
+            startDate: property.capexReserve.startDate,
+            indexationType: property.capexReserve.indexationType as IndexationType,
+            indexationRate: property.capexReserve.indexationRate,
+          }
+        : null
+
+      const cashflows = calcPropertyCashflow(propertyInput, leases, capexItems, periods, capexReserve)
       propertyCashflowMap[property.id] = cashflows
 
       propertyCFInputs.push({

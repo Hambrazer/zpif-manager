@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/utils/auth'
 import { calcPropertyCashflow, type PropertyExpenseInput } from '@/lib/calculations/cashflow'
 import { calcDCF } from '@/lib/calculations/dcf'
-import type { LeaseInput, CapexInput, MonthlyPeriod, IndexationType } from '@/lib/types'
+import type { LeaseInput, CapexInput, CapexReserveInput, MonthlyPeriod, IndexationType } from '@/lib/types'
 
 export type DCFSummary = {
   npv: number
@@ -32,6 +32,7 @@ export async function GET(req: Request, { params }: Params) {
       include: {
         leaseContracts: { include: { stepRents: true } },
         capexItems:     true,
+        capexReserve:   true,
       },
     })
 
@@ -86,7 +87,16 @@ export async function GET(req: Request, { params }: Params) {
       }
     })
 
-    const cashflows = calcPropertyCashflow(propertyInput, leases, capexItems, periods)
+    const capexReserve: CapexReserveInput | null = property.capexReserve
+      ? {
+          ratePerSqm:     property.capexReserve.ratePerSqm,
+          startDate:      property.capexReserve.startDate,
+          indexationType: property.capexReserve.indexationType as IndexationType,
+          indexationRate: property.capexReserve.indexationRate,
+        }
+      : null
+
+    const cashflows = calcPropertyCashflow(propertyInput, leases, capexItems, periods, capexReserve)
     const acquisitionPrice = property.acquisitionPrice ?? 0
     const dcf = calcDCF(cashflows, property.wacc, property.exitCapRate, acquisitionPrice)
 

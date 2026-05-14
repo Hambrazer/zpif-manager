@@ -43,6 +43,7 @@ export async function POST(req: Request) {
         name: b['name'] as string,
         amount: b['amount'] as number,
         plannedDate: new Date(b['plannedDate'] as string),
+        ...(typeof b['notes'] === 'string' ? { notes: b['notes'] } : {}),
       },
     })
 

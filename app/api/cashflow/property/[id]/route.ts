@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/utils/auth'
 import { calcPropertyCashflow, type PropertyExpenseInput } from '@/lib/calculations/cashflow'
-import type { LeaseInput, CapexInput, MonthlyPeriod, IndexationType } from '@/lib/types'
+import type { LeaseInput, CapexInput, CapexReserveInput, MonthlyPeriod, IndexationType } from '@/lib/types'
 
 type Params = { params: { id: string } }
 
@@ -23,6 +23,7 @@ export async function GET(req: Request, { params }: Params) {
       include: {
         leaseContracts: { include: { stepRents: true } },
         capexItems: true,
+        capexReserve: true,
       },
     })
 
@@ -77,7 +78,16 @@ export async function GET(req: Request, { params }: Params) {
       }
     })
 
-    const cashflows = calcPropertyCashflow(propertyInput, leases, capexItems, periods)
+    const capexReserve: CapexReserveInput | null = property.capexReserve
+      ? {
+          ratePerSqm: property.capexReserve.ratePerSqm,
+          startDate: property.capexReserve.startDate,
+          indexationType: property.capexReserve.indexationType as IndexationType,
+          indexationRate: property.capexReserve.indexationRate,
+        }
+      : null
+
+    const cashflows = calcPropertyCashflow(propertyInput, leases, capexItems, periods, capexReserve)
 
     return Response.json({ data: cashflows })
   } catch {

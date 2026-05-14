@@ -102,6 +102,7 @@ model Property {
   fund                Fund                  @relation(fields: [fundId], references: [id], onDelete: Cascade)
   leaseContracts      LeaseContract[]
   capexItems          CapexItem[]
+  capexReserve        CapexReserve?
 }
 
 // ─── Договор аренды ───────────────────────────────────────────────────────────
@@ -157,10 +158,26 @@ model CapexItem {
   name         String
   amount       Float    // ₽
   plannedDate  DateTime
+  notes        String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+}
+
+// ─── Периодический резерв CAPEX ───────────────────────────────────────────────
+
+model CapexReserve {
+  id              String         @id @default(cuid())
+  propertyId      String         @unique
+  ratePerSqm      Float          // ₽/м²/год
+  startDate       DateTime
+  indexationType  IndexationType
+  indexationRate  Float?         // фикс. % индексации/год, в долях; null если NONE/CPI
+  updatedAt       DateTime       @updatedAt
+  createdAt       DateTime       @default(now())
+
+  property        Property       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 }
 
 // ─── Долг на уровне фонда ─────────────────────────────────────────────────────

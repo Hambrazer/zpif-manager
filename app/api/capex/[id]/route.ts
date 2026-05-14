@@ -32,6 +32,8 @@ export async function PUT(req: Request, { params }: Params) {
     if (typeof b['name'] === 'string') upd.name = b['name']
     if (typeof b['amount'] === 'number') upd.amount = b['amount']
     if (typeof b['plannedDate'] === 'string') upd.plannedDate = new Date(b['plannedDate'])
+    if (typeof b['notes'] === 'string') upd.notes = b['notes']
+    else if (b['notes'] === null) upd.notes = null
 
     const item = await prisma.capexItem.update({ where: { id: params.id }, data: upd })
     return Response.json({ data: item })

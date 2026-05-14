@@ -48,6 +48,14 @@ export type CapexInput = {
   plannedDate: Date
 }
 
+// Периодический резерв CAPEX: ₽/м²/год, начисляется ежемесячно от startDate, индексируется
+export type CapexReserveInput = {
+  ratePerSqm: number                            // ₽/м²/год
+  startDate: Date                               // начало начисления
+  indexationType: IndexationType
+  indexationRate: number | null                 // фикс. % индексации/год, в долях
+}
+
 export type DebtInput = {
   id: string
   principalAmount: number

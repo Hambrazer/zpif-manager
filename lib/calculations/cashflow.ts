@@ -1,6 +1,7 @@
 import type {
   LeaseInput,
   CapexInput,
+  CapexReserveInput,
   MonthlyPeriod,
   MonthlyCashflow,
   TenantCashflow,
@@ -47,6 +48,11 @@ function isLeaseActiveInPeriod(lease: LeaseInput, period: MonthlyPeriod): boolea
  *   propertyTax = cadastralValue × propertyTaxRate / 12
  *   landTax     = landCadastralValue × landTaxRate / 12
  *
+ * CAPEX = Σ CapexItem в этом месяце + CapexReserve (если задан):
+ *   capexReserve_t = rentableArea × indexedRate(reserve) / 12,
+ *   индексация резерва — calcIndexedRent от ratePerSqm с базой startDate,
+ *   начисление начинается с месяца, в котором наступает или уже наступила startDate.
+ *
  * NOI = (nri + opexReimbTotal) − opex − propertyTax − landTax − maintenance
  * FCF = NOI − CAPEX
  */
@@ -54,7 +60,8 @@ export function calcPropertyCashflow(
   property: PropertyExpenseInput,
   leases: LeaseInput[],
   capexItems: CapexInput[],
-  periods: MonthlyPeriod[]
+  periods: MonthlyPeriod[],
+  capexReserve?: CapexReserveInput | null
 ): MonthlyCashflow[] {
   if (periods.length === 0) return []
 
@@ -127,7 +134,20 @@ export function calcPropertyCashflow(
 
     const totalIncome = rentTotal + opexReimbursementTotal
     const noi = totalIncome - opex - propertyTax - landTax - maintenance
-    const capexAmount = capexMap.get(key) ?? 0
+
+    let capexAmount = capexMap.get(key) ?? 0
+    if (capexReserve && periodEnd >= capexReserve.startDate) {
+      const indexedReserveRate = calcIndexedRent(
+        capexReserve.ratePerSqm,
+        capexReserve.startDate,
+        periodEnd,
+        capexReserve.indexationType,
+        capexReserve.indexationRate,
+        cpiValues
+      )
+      capexAmount += (property.rentableArea * indexedReserveRate) / 12
+    }
+
     const fcf = noi - capexAmount
 
     return {
