@@ -16,7 +16,6 @@ export async function GET(_req: Request, { params }: Params) {
       include: {
         leaseContracts: { orderBy: { startDate: 'asc' } },
         capexItems: { orderBy: { plannedDate: 'asc' } },
-        scenarioAssumptions: true,
       },
     })
     return Response.json({ data: property })

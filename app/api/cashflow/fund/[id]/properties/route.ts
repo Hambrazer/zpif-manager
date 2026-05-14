@@ -4,9 +4,7 @@ import { calcPropertyCashflow, type PropertyExpenseInput } from '@/lib/calculati
 import type {
   LeaseInput,
   CapexInput,
-  ScenarioInput,
   MonthlyPeriod,
-  ScenarioType,
   IndexationType,
   ApiResponse,
 } from '@/lib/types'
@@ -21,14 +19,11 @@ export type PropertyMetrics = {
 
 type Params = { params: { id: string } }
 
-export async function GET(req: Request, { params }: Params) {
+const DEFAULT_CPI_RATE = 0.07
+
+export async function GET(_req: Request, { params }: Params) {
   const authError = await requireAuth()
   if (authError) return authError
-
-  const { searchParams } = new URL(req.url)
-  const scenarioParam = (searchParams.get('scenario') ?? 'BASE').toUpperCase()
-  const scenarioType: ScenarioType =
-    scenarioParam === 'BULL' ? 'BULL' : scenarioParam === 'BEAR' ? 'BEAR' : 'BASE'
 
   const now = new Date()
   const startYear = now.getFullYear()
@@ -50,7 +45,6 @@ export async function GET(req: Request, { params }: Params) {
           include: {
             leaseContracts: true,
             capexItems: true,
-            scenarioAssumptions: true,
           },
         },
       },
@@ -62,14 +56,6 @@ export async function GET(req: Request, { params }: Params) {
         .reduce((s, lc) => s + lc.area, 0)
       const occupancy = property.rentableArea > 0 ? activeArea / property.rentableArea : 0
 
-      const scenarioRaw =
-        property.scenarioAssumptions.find((sa) => sa.scenarioType === scenarioType) ??
-        property.scenarioAssumptions.find((sa) => sa.scenarioType === 'BASE')
-
-      if (!scenarioRaw) {
-        return { id: property.id, annualNOI: 0, occupancy, capRate: null, exitCapRate: null }
-      }
-
       const propertyInput: PropertyExpenseInput = {
         rentableArea: property.rentableArea,
         opexRate: property.opexRate,
@@ -78,6 +64,7 @@ export async function GET(req: Request, { params }: Params) {
         landCadastralValue: property.landCadastralValue,
         propertyTaxRate: property.propertyTaxRate,
         landTaxRate: property.landTaxRate,
+        cpiRate: DEFAULT_CPI_RATE,
       }
 
       const leases: LeaseInput[] = property.leaseContracts.map((lc) => ({
@@ -101,27 +88,14 @@ export async function GET(req: Request, { params }: Params) {
         plannedDate: c.plannedDate,
       }))
 
-      const scenario: ScenarioInput = {
-        scenarioType: scenarioRaw.scenarioType as ScenarioType,
-        vacancyRate: scenarioRaw.vacancyRate,
-        rentGrowthRate: scenarioRaw.rentGrowthRate,
-        opexGrowthRate: scenarioRaw.opexGrowthRate,
-        discountRate: property.wacc,
-        cpiRate: scenarioRaw.cpiRate,
-        terminalType: scenarioRaw.terminalType as 'EXIT_CAP_RATE' | 'GORDON',
-        exitCapRate: scenarioRaw.exitCapRate,
-        gordonGrowthRate: scenarioRaw.gordonGrowthRate,
-        projectionYears: scenarioRaw.projectionYears,
-      }
-
-      const cashflows = calcPropertyCashflow(propertyInput, leases, capexItems, scenario, periods)
+      const cashflows = calcPropertyCashflow(propertyInput, leases, capexItems, periods)
       const annualNOI = cashflows.reduce((s, cf) => s + cf.noi, 0)
       const capRate =
         property.acquisitionPrice && property.acquisitionPrice > 0
           ? annualNOI / property.acquisitionPrice
           : null
 
-      return { id: property.id, annualNOI, occupancy, capRate, exitCapRate: scenarioRaw.exitCapRate }
+      return { id: property.id, annualNOI, occupancy, capRate, exitCapRate: property.exitCapRate }
     })
 
     return Response.json({ data: result } satisfies ApiResponse<PropertyMetrics[]>)

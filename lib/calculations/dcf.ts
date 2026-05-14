@@ -1,4 +1,4 @@
-import type { MonthlyCashflow, ScenarioInput, DCFResult } from '../types'
+import type { MonthlyCashflow, DCFResult } from '../types'
 import { MONTHS_PER_YEAR, IRR_PRECISION, IRR_MAX_ITERATIONS } from './constants'
 
 /**
@@ -43,26 +43,15 @@ export function calcIRR(cashflows: number[]): number {
 }
 
 /**
- * Терминальная стоимость объекта в конце горизонта прогноза.
- * lastNOI, lastFCF — суммарные годовые NOI/FCF последнего года прогноза.
- * Метод выбирается из scenario.terminalType.
+ * Терминальная стоимость объекта методом Exit Cap Rate.
+ * lastNOI — суммарный NOI последнего года прогноза.
  */
 export function calcTerminalValue(
   lastNOI: number,
-  lastFCF: number,
-  scenario: ScenarioInput
+  exitCapRate: number | null
 ): number {
-  if (scenario.terminalType === 'EXIT_CAP_RATE') {
-    if (scenario.exitCapRate === null || scenario.exitCapRate === 0) return 0
-    return lastNOI / scenario.exitCapRate
-  }
-
-  // GORDON: TV = FCF_last × (1 + g) / (r − g)
-  if (scenario.gordonGrowthRate === null) return 0
-  const denom = scenario.discountRate - scenario.gordonGrowthRate
-  // denominator must be strictly positive
-  if (denom <= 0) return 0
-  return (lastFCF * (1 + scenario.gordonGrowthRate)) / denom
+  if (!exitCapRate || exitCapRate === 0) return 0
+  return lastNOI / exitCapRate
 }
 
 /**
@@ -77,23 +66,21 @@ export function calcTerminalValue(
  */
 export function calcDCF(
   propertyCashflows: MonthlyCashflow[],
-  scenario: ScenarioInput,
+  discountRate: number,
+  exitCapRate: number | null,
   acquisitionPrice = 0
 ): DCFResult {
   if (propertyCashflows.length === 0) {
-    return { cashflows: [], terminalValue: 0, npv: 0, irr: 0, discountRate: scenario.discountRate }
+    return { cashflows: [], terminalValue: 0, npv: 0, irr: 0, discountRate }
   }
 
-  const r = scenario.discountRate / MONTHS_PER_YEAR
+  const r = discountRate / MONTHS_PER_YEAR
   const n = propertyCashflows.length
 
-  // Годовые NOI/FCF = сумма последних 12 месяцев (или всего периода если < 12)
   const lastYearFlows = propertyCashflows.slice(-MONTHS_PER_YEAR)
   const lastNOI = lastYearFlows.reduce((sum, cf) => sum + cf.noi, 0)
-  const lastFCF = lastYearFlows.reduce((sum, cf) => sum + cf.fcf, 0)
-  const terminalValue = calcTerminalValue(lastNOI, lastFCF, scenario)
+  const terminalValue = calcTerminalValue(lastNOI, exitCapRate)
 
-  // NPV: дисконтирование с t=1..n, TV добавляется к последнему периоду
   let npv = 0
   for (let t = 0; t < n; t++) {
     const cf = propertyCashflows[t]!
@@ -101,7 +88,6 @@ export function calcDCF(
     npv += (cf.fcf + tv) / Math.pow(1 + r, t + 1)
   }
 
-  // IRR: аннуализированный месячный IRR (только если известна цена приобретения)
   let irr = 0
   if (acquisitionPrice > 0) {
     const flows: number[] = propertyCashflows.map((cf, i) =>
@@ -112,5 +98,5 @@ export function calcDCF(
     irr = isNaN(irrMonthly) ? 0 : Math.pow(1 + irrMonthly, MONTHS_PER_YEAR) - 1
   }
 
-  return { cashflows: propertyCashflows, terminalValue, npv, irr, discountRate: scenario.discountRate }
+  return { cashflows: propertyCashflows, terminalValue, npv, irr, discountRate }
 }

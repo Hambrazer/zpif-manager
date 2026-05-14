@@ -6,25 +6,19 @@ import type {
   LeaseInput,
   CapexInput,
   DebtInput,
-  ScenarioInput,
   FundInput,
   DistributionPeriodicity,
-  ScenarioType,
   IndexationType,
   AmortizationType,
 } from '@/lib/types'
 
 type Params = { params: { id: string } }
 
-export async function GET(req: Request, { params }: Params) {
+const DEFAULT_CPI_RATE = 0.07
+
+export async function GET(_req: Request, { params }: Params) {
   const authError = await requireAuth()
   if (authError) return authError
-
-  const { searchParams } = new URL(req.url)
-
-  const scenarioParam = (searchParams.get('scenario') ?? 'BASE').toUpperCase()
-  const scenarioType: ScenarioType =
-    scenarioParam === 'BULL' ? 'BULL' : scenarioParam === 'BEAR' ? 'BEAR' : 'BASE'
 
   try {
     const fund = await prisma.fund.findUniqueOrThrow({
@@ -34,7 +28,6 @@ export async function GET(req: Request, { params }: Params) {
           include: {
             leaseContracts: true,
             capexItems: true,
-            scenarioAssumptions: true,
           },
         },
         fundDebts: true,
@@ -47,12 +40,6 @@ export async function GET(req: Request, { params }: Params) {
     const propertyCFInputs: PropertyCFInput[] = []
 
     for (const property of fund.properties) {
-      const scenarioRaw =
-        property.scenarioAssumptions.find((sa) => sa.scenarioType === scenarioType) ??
-        property.scenarioAssumptions.find((sa) => sa.scenarioType === 'BASE')
-
-      if (!scenarioRaw) continue
-
       const propertyInput: PropertyExpenseInput = {
         rentableArea: property.rentableArea,
         opexRate: property.opexRate,
@@ -61,6 +48,7 @@ export async function GET(req: Request, { params }: Params) {
         landCadastralValue: property.landCadastralValue,
         propertyTaxRate: property.propertyTaxRate,
         landTaxRate: property.landTaxRate,
+        cpiRate: DEFAULT_CPI_RATE,
       }
 
       const leases: LeaseInput[] = property.leaseContracts.map((lc) => ({
@@ -84,20 +72,7 @@ export async function GET(req: Request, { params }: Params) {
         plannedDate: c.plannedDate,
       }))
 
-      const scenario: ScenarioInput = {
-        scenarioType: scenarioRaw.scenarioType as ScenarioType,
-        vacancyRate: scenarioRaw.vacancyRate,
-        rentGrowthRate: scenarioRaw.rentGrowthRate,
-        opexGrowthRate: scenarioRaw.opexGrowthRate,
-        discountRate: property.wacc,
-        cpiRate: scenarioRaw.cpiRate,
-        terminalType: scenarioRaw.terminalType as 'EXIT_CAP_RATE' | 'GORDON',
-        exitCapRate: scenarioRaw.exitCapRate,
-        gordonGrowthRate: scenarioRaw.gordonGrowthRate,
-        projectionYears: scenarioRaw.projectionYears,
-      }
-
-      const cashflows = calcPropertyCashflow(propertyInput, leases, capexItems, scenario, periods)
+      const cashflows = calcPropertyCashflow(propertyInput, leases, capexItems, periods)
       propertyCashflowMap[property.id] = cashflows
 
       propertyCFInputs.push({

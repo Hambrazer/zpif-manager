@@ -1,7 +1,6 @@
 import type {
   LeaseInput,
   CapexInput,
-  ScenarioInput,
   MonthlyPeriod,
   MonthlyCashflow,
   TenantCashflow,
@@ -11,12 +10,13 @@ import { calcIndexedRent } from './indexation'
 // Поля объекта, необходимые для расчёта денежного потока
 export type PropertyExpenseInput = {
   rentableArea: number
-  opexRate: number               // ₽/м²/год (индексируется на ИПЦ)
-  maintenanceRate: number        // эксплуатационные расходы, ₽/м²/год (индексируется на ИПЦ)
+  opexRate: number               // ₽/м²/год — фиксированная ставка, без индексации
+  maintenanceRate: number        // эксплуатационные расходы, ₽/м²/год — фиксированная ставка
   cadastralValue: number | null  // кадастровая стоимость здания, ₽
   landCadastralValue: number | null
   propertyTaxRate: number        // в долях (0.022 = 2.2%)
   landTaxRate: number            // в долях
+  cpiRate: number                // ИПЦ в долях (0.07 = 7%) — для CPI-индексации договоров
 }
 
 function lastDayOfMonth(period: MonthlyPeriod): Date {
@@ -35,37 +35,35 @@ function isLeaseActiveInPeriod(lease: LeaseInput, period: MonthlyPeriod): boolea
 }
 
 /**
- * Рассчитывает помесячный денежный поток объекта недвижимости (v2).
+ * Рассчитывает помесячный денежный поток объекта недвижимости.
  *
- * Доходы:
- *   GRI  = Σ active leases: area × indexedBaseRent × rentGrowthFactor / 12
- *   opexReimbursementTotal = Σ active leases: area × indexedOpexReimbursementRate / 12
- *   Оба потока умножаются на (1 − vacancyRate)
+ * Доходы считаются по факту активных договоров — без вакансии.
+ *   rentIncome = Σ активных lease: area × calcIndexedRent(lease, period) / 12
+ *   opexReimbTotal = Σ активных lease: area × calcIndexedOpexReimb(lease, period) / 12
  *
- * Расходы объекта:
- *   opex        = opexRate × rentableArea / 12 × CPI^t × opexGrowthFactor
- *   maintenance = maintenanceRate × rentableArea / 12 × CPI^t × opexGrowthFactor
+ * Расходы объекта — фиксированные ставки, без индексации:
+ *   opex        = opexRate × rentableArea / 12
+ *   maintenance = maintenanceRate × rentableArea / 12
  *   propertyTax = cadastralValue × propertyTaxRate / 12
  *   landTax     = landCadastralValue × landTaxRate / 12
  *
- * NOI = (nri + opexReimbursementTotal) − opex − propertyTax − landTax − maintenance
+ * NOI = (nri + opexReimbTotal) − opex − propertyTax − landTax − maintenance
  * FCF = NOI − CAPEX
- * debtService = 0 (долг только на уровне фонда)
  */
 export function calcPropertyCashflow(
   property: PropertyExpenseInput,
   leases: LeaseInput[],
   capexItems: CapexInput[],
-  scenario: ScenarioInput,
   periods: MonthlyPeriod[]
 ): MonthlyCashflow[] {
   if (periods.length === 0) return []
 
   const firstPeriod = periods[0]!
+  const lastPeriod = periods[periods.length - 1]!
 
   const cpiValues: Record<number, number> = {}
-  for (let y = firstPeriod.year - 1; y <= firstPeriod.year + scenario.projectionYears + 2; y++) {
-    cpiValues[y] = scenario.cpiRate
+  for (let y = firstPeriod.year - 1; y <= lastPeriod.year + 2; y++) {
+    cpiValues[y] = property.cpiRate
   }
 
   const capexMap = new Map<string, number>()
@@ -75,23 +73,19 @@ export function calcPropertyCashflow(
     capexMap.set(`${y}-${m}`, (capexMap.get(`${y}-${m}`) ?? 0) + capex.amount)
   }
 
-  // Виртуальный startDate для индексации OPEX/maintenance = начало первого периода
-  const opexVirtualStart = new Date(firstPeriod.year, firstPeriod.month - 1, 1)
+  // Фиксированные расходы одинаковы для всех периодов
+  const opex = (property.opexRate * property.rentableArea) / 12
+  const maintenance = (property.maintenanceRate * property.rentableArea) / 12
+  const propertyTax = ((property.cadastralValue ?? 0) * property.propertyTaxRate) / 12
+  const landTax = ((property.landCadastralValue ?? 0) * property.landTaxRate) / 12
 
   return periods.map((period) => {
     const key = periodKey(period)
     const periodEnd = lastDayOfMonth(period)
-    const monthOffset =
-      (period.year - firstPeriod.year) * 12 + (period.month - firstPeriod.month)
-    const yearOffset = Math.floor(monthOffset / 12)
-    const rentGrowthFactor = Math.pow(1 + scenario.rentGrowthRate, yearOffset)
-    const opexGrowthFactor = Math.pow(1 + scenario.opexGrowthRate, yearOffset)
 
-    // Считаем доходы по каждому арендатору
-    type TenantRaw = { lease: LeaseInput; rentGross: number; opexReimbGross: number }
-    const activeTenants: TenantRaw[] = []
     let gri = 0
-    let opexReimbursementGross = 0
+    let opexReimbursementTotal = 0
+    const tenants: TenantCashflow[] = []
 
     for (const lease of leases) {
       if (!isLeaseActiveInPeriod(lease, period)) continue
@@ -104,8 +98,8 @@ export function calcPropertyCashflow(
         lease.indexationRate,
         cpiValues
       )
-      const rentGross = (lease.area * indexedRent * rentGrowthFactor) / 12
-      gri += rentGross
+      const rentIncome = (lease.area * indexedRent) / 12
+      gri += rentIncome
 
       const indexedOpexReimb = calcIndexedRent(
         lease.opexReimbursementRate,
@@ -115,51 +109,22 @@ export function calcPropertyCashflow(
         lease.opexReimbursementIndexationRate,
         cpiValues
       )
-      const opexReimbGross = (lease.area * indexedOpexReimb) / 12
-      opexReimbursementGross += opexReimbGross
+      const opexReimbursement = (lease.area * indexedOpexReimb) / 12
+      opexReimbursementTotal += opexReimbursement
 
-      activeTenants.push({ lease, rentGross, opexReimbGross })
+      tenants.push({
+        tenantId: lease.id,
+        tenantName: lease.tenantName,
+        rentIncome,
+        opexReimbursement,
+      })
     }
 
-    const vacancy = gri * scenario.vacancyRate
-    const nri = gri - vacancy
-    const occupancyFactor = 1 - scenario.vacancyRate
-    const opexReimbursementTotal = opexReimbursementGross * occupancyFactor
-
-    const tenants: TenantCashflow[] = activeTenants.map(({ lease, rentGross, opexReimbGross }) => ({
-      tenantId: lease.id,
-      tenantName: lease.tenantName,
-      rentIncome: rentGross * occupancyFactor,
-      opexReimbursement: opexReimbGross * occupancyFactor,
-    }))
-
-    // Расходы объекта
-    const opexIndexed = calcIndexedRent(
-      property.opexRate,
-      opexVirtualStart,
-      periodEnd,
-      'CPI',
-      null,
-      cpiValues
-    )
-    const opex = (opexIndexed * property.rentableArea) / 12 * opexGrowthFactor
-
-    const maintenanceIndexed = calcIndexedRent(
-      property.maintenanceRate,
-      opexVirtualStart,
-      periodEnd,
-      'CPI',
-      null,
-      cpiValues
-    )
-    const maintenance = (maintenanceIndexed * property.rentableArea) / 12 * opexGrowthFactor
-
-    const propertyTax = ((property.cadastralValue ?? 0) * property.propertyTaxRate) / 12
-    const landTax = ((property.landCadastralValue ?? 0) * property.landTaxRate) / 12
-
-    const capex = capexMap.get(key) ?? 0
+    const vacancy = 0
+    const nri = gri
     const noi = nri + opexReimbursementTotal - opex - propertyTax - landTax - maintenance
-    const fcf = noi - capex
+    const capexAmount = capexMap.get(key) ?? 0
+    const fcf = noi - capexAmount
 
     return {
       period,
@@ -171,9 +136,8 @@ export function calcPropertyCashflow(
       propertyTax,
       landTax,
       maintenance,
-      capex,
+      capex: capexAmount,
       noi,
-      debtService: 0,
       fcf,
       tenants,
     }

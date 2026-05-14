@@ -12,13 +12,14 @@ import type {
   LeaseInput,
   CapexInput,
   DebtInput,
-  ScenarioInput,
   MonthlyPeriod,
   MonthlyCashflow,
   IndexationType,
   AmortizationType,
-  ScenarioType,
 } from '@/lib/types'
+
+const DEFAULT_YEARS = 10
+const DEFAULT_CPI_RATE = 0.07
 
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions)
@@ -31,7 +32,6 @@ export default async function DashboardPage() {
         include: {
           leaseContracts: true,
           capexItems: true,
-          scenarioAssumptions: true,
         },
       },
       fundDebts: true,
@@ -42,7 +42,6 @@ export default async function DashboardPage() {
   const now = new Date()
   const startYear = now.getFullYear()
   const startMonth = now.getMonth() + 1
-  const DEFAULT_YEARS = 10
 
   const funds: FundSummary[] = fundsRaw.map(fund => {
     const propertyCashflows: MonthlyCashflow[][] = []
@@ -51,24 +50,13 @@ export default async function DashboardPage() {
     let totalRentableArea = 0
     let totalActiveLeaseArea = 0
 
-    let maxYears = DEFAULT_YEARS
-    for (const p of fund.properties) {
-      const s = p.scenarioAssumptions.find(sa => sa.scenarioType === 'BASE')
-      if (s) maxYears = Math.max(maxYears, s.projectionYears)
-    }
-
-    const totalMonths = maxYears * MONTHS_PER_YEAR
+    const totalMonths = DEFAULT_YEARS * MONTHS_PER_YEAR
     const periods: MonthlyPeriod[] = Array.from({ length: totalMonths }, (_, i) => {
       const m = startMonth - 1 + i
       return { year: startYear + Math.floor(m / 12), month: (m % 12) + 1 }
     })
 
     for (const property of fund.properties) {
-      const scenarioRaw = property.scenarioAssumptions.find(
-        sa => sa.scenarioType === 'BASE'
-      )
-      if (!scenarioRaw) continue
-
       const propertyInput: PropertyExpenseInput = {
         rentableArea: property.rentableArea,
         opexRate: property.opexRate,
@@ -77,6 +65,7 @@ export default async function DashboardPage() {
         landCadastralValue: property.landCadastralValue,
         propertyTaxRate: property.propertyTaxRate,
         landTaxRate: property.landTaxRate,
+        cpiRate: DEFAULT_CPI_RATE,
       }
 
       const leases: LeaseInput[] = property.leaseContracts.map(lc => ({
@@ -100,26 +89,13 @@ export default async function DashboardPage() {
         plannedDate: c.plannedDate,
       }))
 
-      const scenario: ScenarioInput = {
-        scenarioType: scenarioRaw.scenarioType as ScenarioType,
-        vacancyRate: scenarioRaw.vacancyRate,
-        rentGrowthRate: scenarioRaw.rentGrowthRate,
-        opexGrowthRate: scenarioRaw.opexGrowthRate,
-        discountRate: property.wacc,
-        cpiRate: scenarioRaw.cpiRate,
-        terminalType: scenarioRaw.terminalType as 'EXIT_CAP_RATE' | 'GORDON',
-        exitCapRate: scenarioRaw.exitCapRate,
-        gordonGrowthRate: scenarioRaw.gordonGrowthRate,
-        projectionYears: scenarioRaw.projectionYears,
-      }
-
-      const propertyCF = calcPropertyCashflow(propertyInput, leases, capexItems, scenario, periods)
+      const propertyCF = calcPropertyCashflow(propertyInput, leases, capexItems, periods)
       propertyCashflows.push(propertyCF)
 
       const acquisitionPrice = property.acquisitionPrice ?? 0
       totalAcquisitionPrice += acquisitionPrice
 
-      const dcfResult = calcDCF(propertyCF, scenario, acquisitionPrice)
+      const dcfResult = calcDCF(propertyCF, property.wacc, property.exitCapRate, acquisitionPrice)
       totalPropertyNPV += dcfResult.npv
 
       totalRentableArea += property.rentableArea

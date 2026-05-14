@@ -2,8 +2,6 @@
 
 export type IndexationType = 'CPI' | 'FIXED' | 'NONE'
 export type AmortizationType = 'ANNUITY' | 'BULLET' | 'LINEAR'
-export type ScenarioType = 'BASE' | 'BULL' | 'BEAR'
-export type TerminalType = 'EXIT_CAP_RATE' | 'GORDON'
 export type LeaseStatus = 'ACTIVE' | 'EXPIRED' | 'TERMINATING'
 export type DistributionPeriodicity = 'MONTHLY' | 'QUARTERLY' | 'ANNUAL'
 
@@ -31,16 +29,6 @@ export type LeaseInput = {
   status: LeaseStatus
 }
 
-// Сохранён для обратной совместимости с scenarios.ts
-export type OpexInput = {
-  id: string
-  name: string
-  amount: number                                // ₽/год
-  periodicity: 'MONTHLY' | 'ANNUAL'
-  indexationType: IndexationType
-  indexationRate: number | null
-}
-
 export type CapexInput = {
   id: string
   amount: number                                // ₽
@@ -54,21 +42,6 @@ export type DebtInput = {
   startDate: Date
   endDate: Date
   amortizationType: AmortizationType
-}
-
-export type ScenarioInput = {
-  scenarioType: ScenarioType
-  vacancyRate: number                           // в долях (0.05 = 5%)
-  rentGrowthRate: number                        // рост аренды сверх индексации, в долях
-  opexGrowthRate: number                        // рост OPEX, в долях
-  // discountRate сохранён для обратной совместимости с dcf.ts — будет удалён в V2.2.1
-  // WACC теперь хранится в PropertyInput.wacc
-  discountRate: number
-  terminalType: TerminalType
-  exitCapRate: number | null
-  gordonGrowthRate: number | null
-  projectionYears: number
-  cpiRate: number                               // ИПЦ, в долях (вводится пользователем)
 }
 
 // v2: полные данные объекта для расчётов (включает новые поля схемы)
@@ -88,7 +61,6 @@ export type PropertyInput = {
   wacc: number                                  // ставка дисконтирования, в долях
   leases: LeaseInput[]
   capexItems: CapexInput[]
-  scenarios: ScenarioInput[]
 }
 
 // v2: данные фонда для расчётов
@@ -131,7 +103,6 @@ export type MonthlyCashflow = {
   maintenance: number                           // эксплуатационные расходы, ₽/мес
   capex: number                                 // CAPEX
   noi: number                                   // Net Operating Income
-  debtService: number                           // обслуживание долга (0 на уровне объекта)
   fcf: number                                   // Free Cash Flow = noi - capex
   tenants: TenantCashflow[]                     // детализация по арендаторам
 }
@@ -210,10 +181,6 @@ export type MonthlyDebtPayment = {
   total: number
   remainingBalance: number
 }
-
-// ─── Сценарный анализ ────────────────────────────────────────────────────────
-
-export type ScenarioResults = Partial<Record<ScenarioType, MonthlyCashflow[]>>
 
 // ─── API ──────────────────────────────────────────────────────────────────────
 

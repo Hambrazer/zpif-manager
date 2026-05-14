@@ -13,7 +13,7 @@ type PeriodAggregate = {
   gri: number; vacancy: number; nri: number
   opexReimbursementTotal: number
   opex: number; propertyTax: number; landTax: number; maintenance: number
-  capex: number; noi: number; debtService: number
+  capex: number; noi: number
 }
 
 function zeroAggregate(): PeriodAggregate {
@@ -21,7 +21,7 @@ function zeroAggregate(): PeriodAggregate {
     gri: 0, vacancy: 0, nri: 0,
     opexReimbursementTotal: 0,
     opex: 0, propertyTax: 0, landTax: 0, maintenance: 0,
-    capex: 0, noi: 0, debtService: 0,
+    capex: 0, noi: 0,
   }
 }
 
@@ -63,7 +63,6 @@ export function calcFundCashflow(
       agg.maintenance            += cf.maintenance
       agg.capex                  += cf.capex
       agg.noi                    += cf.noi
-      agg.debtService            += cf.debtService
       aggMap.set(k, agg)
     }
   }
@@ -73,8 +72,8 @@ export function calcFundCashflow(
   return periods.map(period => {
     const k = periodKey(period)
     const agg = aggMap.get(k) ?? zeroAggregate()
-    const debtService = agg.debtService + (debtMap.get(k) ?? 0) + monthlyExpenses
-    const fcf = agg.noi - debtService
+    const fundLevelCosts = (debtMap.get(k) ?? 0) + monthlyExpenses
+    const fcf = agg.noi - agg.capex - fundLevelCosts
     return {
       period,
       gri: agg.gri, vacancy: agg.vacancy, nri: agg.nri,
@@ -82,7 +81,7 @@ export function calcFundCashflow(
       opex: agg.opex, propertyTax: agg.propertyTax,
       landTax: agg.landTax, maintenance: agg.maintenance,
       capex: agg.capex, noi: agg.noi,
-      debtService, fcf,
+      fcf,
       tenants: [],
     }
   })
