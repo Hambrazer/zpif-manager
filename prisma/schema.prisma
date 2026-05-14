@@ -116,6 +116,10 @@ model LeaseContract {
   opexReimbursementIndexationRate Float?         // фикс. % индексации возмещения, в долях
   startDate                       DateTime
   endDate                         DateTime
+  firstIndexationDate             DateTime?
+  indexationFrequency             Int?           // частота индексации аренды в месяцах: 3 / 6 / 12
+  opexFirstIndexationDate         DateTime?
+  opexIndexationFrequency         Int?           // частота индексации возмещения OPEX в месяцах: 3 / 6 / 12
   securityDeposit                 Float?         // ₽
   status                          LeaseStatus
   renewalOption                   Boolean        @default(false)

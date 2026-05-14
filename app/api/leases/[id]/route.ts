@@ -39,6 +39,8 @@ export async function PUT(req: Request, { params }: Params) {
     if (typeof b['endDate'] === 'string') upd.endDate = new Date(b['endDate'])
     if (VALID_INDEXATION.has(b['indexationType'] as IndexationType)) upd.indexationType = b['indexationType'] as IndexationType
     if ('indexationRate' in b) upd.indexationRate = typeof b['indexationRate'] === 'number' ? b['indexationRate'] : null
+    if ('firstIndexationDate' in b) upd.firstIndexationDate = typeof b['firstIndexationDate'] === 'string' ? new Date(b['firstIndexationDate']) : null
+    if ('indexationFrequency' in b) upd.indexationFrequency = typeof b['indexationFrequency'] === 'number' ? b['indexationFrequency'] : null
     if (typeof b['opexReimbursementRate'] === 'number') upd.opexReimbursementRate = b['opexReimbursementRate']
     if (VALID_INDEXATION.has(b['opexReimbursementIndexationType'] as IndexationType)) {
       upd.opexReimbursementIndexationType = b['opexReimbursementIndexationType'] as IndexationType
@@ -48,6 +50,8 @@ export async function PUT(req: Request, { params }: Params) {
         ? b['opexReimbursementIndexationRate']
         : null
     }
+    if ('opexFirstIndexationDate' in b) upd.opexFirstIndexationDate = typeof b['opexFirstIndexationDate'] === 'string' ? new Date(b['opexFirstIndexationDate']) : null
+    if ('opexIndexationFrequency' in b) upd.opexIndexationFrequency = typeof b['opexIndexationFrequency'] === 'number' ? b['opexIndexationFrequency'] : null
     if ('securityDeposit' in b) upd.securityDeposit = typeof b['securityDeposit'] === 'number' ? b['securityDeposit'] : null
     if (VALID_STATUS.has(b['status'] as LeaseStatus)) upd.status = b['status'] as LeaseStatus
     if (typeof b['renewalOption'] === 'boolean') upd.renewalOption = b['renewalOption']

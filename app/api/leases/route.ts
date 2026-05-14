@@ -61,11 +61,15 @@ export async function POST(req: Request) {
         endDate: new Date(b['endDate'] as string),
         indexationType: b['indexationType'] as IndexationType,
         indexationRate: typeof b['indexationRate'] === 'number' ? b['indexationRate'] : null,
+        firstIndexationDate: typeof b['firstIndexationDate'] === 'string' ? new Date(b['firstIndexationDate']) : null,
+        indexationFrequency: typeof b['indexationFrequency'] === 'number' ? b['indexationFrequency'] : null,
         opexReimbursementRate: b['opexReimbursementRate'] as number,
         opexReimbursementIndexationType: b['opexReimbursementIndexationType'] as IndexationType,
         opexReimbursementIndexationRate: typeof b['opexReimbursementIndexationRate'] === 'number'
           ? b['opexReimbursementIndexationRate']
           : null,
+        opexFirstIndexationDate: typeof b['opexFirstIndexationDate'] === 'string' ? new Date(b['opexFirstIndexationDate']) : null,
+        opexIndexationFrequency: typeof b['opexIndexationFrequency'] === 'number' ? b['opexIndexationFrequency'] : null,
         securityDeposit: typeof b['securityDeposit'] === 'number' ? b['securityDeposit'] : null,
         status: b['status'] as LeaseStatus,
         renewalOption: typeof b['renewalOption'] === 'boolean' ? b['renewalOption'] : false,

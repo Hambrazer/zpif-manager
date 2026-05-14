@@ -77,9 +77,13 @@ export default async function DashboardPage() {
         endDate: lc.endDate,
         indexationType: lc.indexationType as IndexationType,
         indexationRate: lc.indexationRate,
+        firstIndexationDate: lc.firstIndexationDate,
+        indexationFrequency: lc.indexationFrequency,
         opexReimbursementRate: lc.opexReimbursementRate,
         opexReimbursementIndexationType: lc.opexReimbursementIndexationType as IndexationType,
         opexReimbursementIndexationRate: lc.opexReimbursementIndexationRate,
+        opexFirstIndexationDate: lc.opexFirstIndexationDate,
+        opexIndexationFrequency: lc.opexIndexationFrequency,
         status: lc.status as 'ACTIVE' | 'EXPIRED' | 'TERMINATING',
       }))
 

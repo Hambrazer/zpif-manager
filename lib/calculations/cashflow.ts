@@ -96,7 +96,9 @@ export function calcPropertyCashflow(
         periodEnd,
         lease.indexationType,
         lease.indexationRate,
-        cpiValues
+        cpiValues,
+        lease.firstIndexationDate ?? null,
+        lease.indexationFrequency ?? null
       )
       const rentIncome = (lease.area * indexedRent) / 12
       gri += rentIncome
@@ -107,7 +109,9 @@ export function calcPropertyCashflow(
         periodEnd,
         lease.opexReimbursementIndexationType,
         lease.opexReimbursementIndexationRate,
-        cpiValues
+        cpiValues,
+        lease.opexFirstIndexationDate ?? null,
+        lease.opexIndexationFrequency ?? null
       )
       const opexReimbursement = (lease.area * indexedOpexReimb) / 12
       opexReimbursementTotal += opexReimbursement

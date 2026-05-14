@@ -23,9 +23,13 @@ export type LeaseInput = {
   endDate: Date
   indexationType: IndexationType
   indexationRate: number | null
+  firstIndexationDate?: Date | null             // первая дата индексации аренды
+  indexationFrequency?: number | null           // частота в месяцах: 3 / 6 / 12
   opexReimbursementRate: number                 // ₽/м²/год (0 если нет возмещения)
   opexReimbursementIndexationType: IndexationType
   opexReimbursementIndexationRate: number | null
+  opexFirstIndexationDate?: Date | null         // первая дата индексации возмещения OPEX
+  opexIndexationFrequency?: number | null       // частота в месяцах: 3 / 6 / 12
   status: LeaseStatus
 }
 

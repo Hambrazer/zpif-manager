@@ -5,14 +5,12 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { formatRub, formatPct, formatDate } from '@/lib/utils/format'
 import { LeaseForm } from '@/components/forms/LeaseForm'
-import { RentRollTable } from '@/components/tables/RentRollTable'
 import { GanttChart } from '@/components/charts/GanttChart'
 import type { GanttLease } from '@/components/charts/GanttChart'
 import { exportRentRollToExcel } from '@/lib/utils/exportRentRoll'
 import { CashflowChart } from '@/components/charts/CashflowChart'
 import { CashflowTable } from '@/components/tables/CashflowTable'
-import { ScenarioTabs } from '@/components/ScenarioTabs'
-import type { MonthlyCashflow, ScenarioType } from '@/lib/types'
+import type { MonthlyCashflow } from '@/lib/types'
 
 type PropertyType = 'OFFICE' | 'WAREHOUSE' | 'RETAIL' | 'MIXED' | 'RESIDENTIAL'
 type IndexationType = 'CPI' | 'FIXED' | 'NONE'
@@ -47,9 +45,13 @@ type LeaseContract = {
   endDate: string
   indexationType: IndexationType
   indexationRate: number | null
+  firstIndexationDate: string | null
+  indexationFrequency: number | null
   opexReimbursementRate: number
   opexReimbursementIndexationType: IndexationType
   opexReimbursementIndexationRate: number | null
+  opexFirstIndexationDate: string | null
+  opexIndexationFrequency: number | null
   securityDeposit: number | null
   status: LeaseStatus
   renewalOption: boolean
@@ -76,11 +78,10 @@ type PropertyData = {
   leaseContracts: LeaseContract[]
 }
 
-type Tab = 'tenants' | 'rentroll' | 'cashflow'
+type Tab = 'tenants' | 'cashflow'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'tenants',  label: 'Арендаторы'    },
-  { id: 'rentroll', label: 'Rent-roll'      },
   { id: 'cashflow', label: 'Денежный поток' },
 ]
 
@@ -170,8 +171,17 @@ export function PropertyPage({ property }: { property: PropertyData }) {
           </div>
 
           <div className="mt-6">
-            {activeTab === 'tenants'  && <TenantsTab  leases={property.leaseContracts} propertyId={property.id} />}
-            {activeTab === 'rentroll' && <RentRollTab leases={property.leaseContracts} rentableArea={property.rentableArea} wault={property.wault} propertyName={property.name} fundStartDate={property.fundStartDate} fundEndDate={property.fundEndDate} />}
+            {activeTab === 'tenants'  && (
+              <TenantsTab
+                leases={property.leaseContracts}
+                propertyId={property.id}
+                wault={property.wault}
+                rentableArea={property.rentableArea}
+                propertyName={property.name}
+                fundStartDate={property.fundStartDate}
+                fundEndDate={property.fundEndDate}
+              />
+            )}
             {activeTab === 'cashflow' && (
             <CashflowTab
               propertyId={property.id}
@@ -190,12 +200,32 @@ export function PropertyPage({ property }: { property: PropertyData }) {
 
 // ─── Вкладка 1: Арендаторы ────────────────────────────────────────────────────
 
-function TenantsTab({ leases, propertyId }: { leases: LeaseContract[]; propertyId: string }) {
+function TenantsTab({
+  leases,
+  propertyId,
+  wault,
+  rentableArea,
+  propertyName,
+  fundStartDate,
+  fundEndDate,
+}: {
+  leases: LeaseContract[]
+  propertyId: string
+  wault: number
+  rentableArea: number
+  propertyName: string
+  fundStartDate: string
+  fundEndDate: string
+}) {
   const router = useRouter()
   const [showAdd, setShowAdd]             = useState(false)
   const [editingLease, setEditingLease]   = useState<LeaseContract | null>(null)
   const [deletingId, setDeletingId]       = useState<string | null>(null)
   const [deleteError, setDeleteError]     = useState<string | null>(null)
+
+  function handleExport() {
+    exportRentRollToExcel(leases, rentableArea, wault, propertyName)
+  }
 
   function handleAdded() {
     setShowAdd(false)
@@ -231,11 +261,25 @@ function TenantsTab({ leases, propertyId }: { leases: LeaseContract[]; propertyI
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        {deleteError && (
-          <p className="text-sm text-red-600">{deleteError}</p>
-        )}
-        <div className="ml-auto">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-gray-600">
+            WAULT:{' '}
+            <span className="font-medium text-gray-900">
+              {wault > 0 ? `${wault.toFixed(1)} лет` : '—'}
+            </span>
+          </span>
+          <button
+            onClick={handleExport}
+            className="rounded-md border border-gray-200 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors"
+          >
+            Экспорт Excel
+          </button>
+        </div>
+        <div className="flex items-center gap-3">
+          {deleteError && (
+            <p className="text-sm text-red-600">{deleteError}</p>
+          )}
           <button
             onClick={() => setShowAdd(true)}
             className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
@@ -389,6 +433,20 @@ function TenantsTab({ leases, propertyId }: { leases: LeaseContract[]; propertyI
         </div>
       )}
 
+      {/* График аренды */}
+      {leases.length > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+            График аренды
+          </p>
+          <GanttChart
+            leases={leases as GanttLease[]}
+            fundStartDate={fundStartDate}
+            fundEndDate={fundEndDate}
+          />
+        </div>
+      )}
+
       {/* Модал — добавить договор */}
       {showAdd && (
         <LeaseModal
@@ -443,54 +501,7 @@ function LeaseModal({
   )
 }
 
-// ─── Вкладка 2: Rent-roll ─────────────────────────────────────────────────────
-
-function RentRollTab({ leases, rentableArea, wault, propertyName, fundStartDate, fundEndDate }: {
-  leases: LeaseContract[]
-  rentableArea: number
-  wault: number
-  propertyName: string
-  fundStartDate: string
-  fundEndDate: string
-}) {
-  const waultDisplay = wault > 0 ? `${wault.toFixed(1)} лет` : '—'
-
-  function handleExport() {
-    exportRentRollToExcel(leases, rentableArea, wault, propertyName)
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-600">
-          WAULT:{' '}
-          <span className="font-medium text-gray-900">{waultDisplay}</span>
-        </div>
-        <button
-          onClick={handleExport}
-          className="rounded-md border border-gray-200 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors"
-        >
-          Экспорт Excel
-        </button>
-      </div>
-
-      <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-          График аренды
-        </p>
-        <GanttChart
-          leases={leases as GanttLease[]}
-          fundStartDate={fundStartDate}
-          fundEndDate={fundEndDate}
-        />
-      </div>
-
-      <RentRollTable leases={leases} rentableArea={rentableArea} />
-    </div>
-  )
-}
-
-// ─── Вкладка 3: Денежный поток ───────────────────────────────────────────────
+// ─── Вкладка 2: Денежный поток ───────────────────────────────────────────────
 
 type DCFSummary = {
   npv: number
@@ -498,12 +509,6 @@ type DCFSummary = {
   terminalValue: number
   discountRate: number
   projectionYears: number
-}
-
-const SCENARIO_LABEL: Record<ScenarioType, string> = {
-  BASE: 'Base',
-  BULL: 'Bull',
-  BEAR: 'Bear',
 }
 
 function CashflowTab({
@@ -519,49 +524,32 @@ function CashflowTab({
   saleDate: string | null
   exitCapRate: number | null
 }) {
-  const [activeScenario, setActiveScenario] = useState<ScenarioType>('BASE')
+  const [cashflows, setCashflows] = useState<MonthlyCashflow[]>([])
+  const [cfLoading, setCfLoading] = useState(true)
+  const [cfError, setCfError]     = useState<string | null>(null)
 
-  // Все сценарии CF — загружаются один раз
-  const [allCashflows, setAllCashflows] = useState<Partial<Record<ScenarioType, MonthlyCashflow[]>>>({})
-  const [available, setAvailable]       = useState<ScenarioType[]>([])
-  const [cfLoading, setCfLoading]       = useState(true)
-  const [cfError, setCfError]           = useState<string | null>(null)
-
-  // DCF — перезапрашивается при смене сценария
   const [dcf, setDcf]               = useState<DCFSummary | null>(null)
   const [dcfLoading, setDcfLoading] = useState(true)
   const [dcfError, setDcfError]     = useState<string | null>(null)
 
-  // Загрузить все три сценария CF сразу
   useEffect(() => {
     setCfLoading(true)
     setCfError(null)
-    fetch(`/api/cashflow/property/${propertyId}/scenarios`)
+    fetch(`/api/cashflow/property/${propertyId}`)
       .then(async res => {
-        const json = await res.json() as {
-          data?: Partial<Record<ScenarioType, MonthlyCashflow[]>>
-          error?: string
-        }
+        const json = await res.json() as { data?: MonthlyCashflow[]; error?: string }
         if (!res.ok) throw new Error(json.error ?? 'Ошибка загрузки')
-        const data = json.data ?? {}
-        setAllCashflows(data)
-        const avail = (['BASE', 'BULL', 'BEAR'] as const).filter(s => s in data) as ScenarioType[]
-        setAvailable(avail)
-        // Если BASE недоступен — переключиться на первый доступный
-        if (avail.length > 0 && !avail.includes('BASE')) {
-          setActiveScenario(avail[0]!)
-        }
+        setCashflows(json.data ?? [])
       })
       .catch(err => setCfError(err instanceof Error ? err.message : 'Ошибка загрузки'))
       .finally(() => setCfLoading(false))
   }, [propertyId])
 
-  // Загрузить DCF при каждой смене сценария
   useEffect(() => {
     setDcfLoading(true)
     setDcfError(null)
     setDcf(null)
-    fetch(`/api/dcf/property/${propertyId}?scenario=${activeScenario}`)
+    fetch(`/api/dcf/property/${propertyId}`)
       .then(async res => {
         const json = await res.json() as { data?: DCFSummary; error?: string }
         if (!res.ok) throw new Error(json.error ?? 'Ошибка загрузки DCF')
@@ -569,10 +557,7 @@ function CashflowTab({
       })
       .catch(err => setDcfError(err instanceof Error ? err.message : 'Ошибка загрузки DCF'))
       .finally(() => setDcfLoading(false))
-  }, [propertyId, activeScenario])
-
-  const cashflows = allCashflows[activeScenario] ?? []
-  const scenLabel = SCENARIO_LABEL[activeScenario]
+  }, [propertyId])
 
   // Расчётная стоимость продажи = NOI следующих 12 мес после saleDate / exitCapRate
   const salePrice = useMemo(() => {
@@ -594,13 +579,6 @@ function CashflowTab({
 
   return (
     <div className="space-y-4">
-      {/* Переключатель сценариев */}
-      {!cfLoading && !cfError && available.length > 0 && (
-        <div className="flex items-center justify-end">
-          <ScenarioTabs available={available} active={activeScenario} onChange={setActiveScenario} />
-        </div>
-      )}
-
       {/* Даты и стоимость продажи */}
       {(purchaseDate ?? saleDate ?? acquisitionPrice) !== null && (
         <div className="bg-white rounded-lg border border-gray-200 px-4 py-3 flex flex-wrap gap-x-8 gap-y-2 text-sm">
@@ -639,7 +617,7 @@ function CashflowTab({
       {/* График NOI/FCF */}
       <div className="bg-white rounded-lg border border-gray-200 p-4">
         <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-          NOI и FCF помесячно ({scenLabel})
+          NOI и FCF помесячно
         </p>
         {cfLoading ? (
           <div className="h-[320px] flex items-center justify-center text-sm text-gray-400">
@@ -657,7 +635,7 @@ function CashflowTab({
       {/* Таблица CF */}
       <div className="bg-white rounded-lg border border-gray-200 p-4">
         <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">
-          Помесячный денежный поток ({scenLabel})
+          Помесячный денежный поток
         </p>
         {cfLoading ? (
           <div className="py-12 text-center text-sm text-gray-400">Загрузка…</div>
@@ -670,7 +648,7 @@ function CashflowTab({
 
       {/* DCF блок */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <p className="text-sm font-semibold text-gray-900 mb-4">DCF-модель ({scenLabel})</p>
+        <p className="text-sm font-semibold text-gray-900 mb-4">DCF-модель</p>
         {dcfError ? (
           <p className="text-sm text-red-500">{dcfError}</p>
         ) : (

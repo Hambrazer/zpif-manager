@@ -25,9 +25,13 @@ export type LeaseData = {
   baseRent: number
   indexationType: IndexationType
   indexationRate: number | null
+  firstIndexationDate: string | null
+  indexationFrequency: number | null
   opexReimbursementRate: number
   opexReimbursementIndexationType: IndexationType
   opexReimbursementIndexationRate: number | null
+  opexFirstIndexationDate: string | null
+  opexIndexationFrequency: number | null
   startDate: string
   endDate: string
   securityDeposit: number | null
@@ -50,9 +54,13 @@ type FormState = {
   baseRent: string
   indexationType: IndexationType
   indexationRate: string
+  firstIndexationDate: string
+  indexationFrequency: string
   opexReimbursementRate: string
   opexReimbursementIndexationType: IndexationType
   opexReimbursementIndexationRate: string
+  opexFirstIndexationDate: string
+  opexIndexationFrequency: string
   startDate: string
   endDate: string
   securityDeposit: string
@@ -69,11 +77,15 @@ function toFormState(data: LeaseData): FormState {
     baseRent: String(data.baseRent),
     indexationType: data.indexationType,
     indexationRate: data.indexationRate != null ? String(+(data.indexationRate * 100).toFixed(4)) : '',
+    firstIndexationDate: data.firstIndexationDate ? data.firstIndexationDate.slice(0, 10) : '',
+    indexationFrequency: data.indexationFrequency != null ? String(data.indexationFrequency) : '',
     opexReimbursementRate: String(data.opexReimbursementRate),
     opexReimbursementIndexationType: data.opexReimbursementIndexationType,
     opexReimbursementIndexationRate: data.opexReimbursementIndexationRate != null
       ? String(+(data.opexReimbursementIndexationRate * 100).toFixed(4))
       : '',
+    opexFirstIndexationDate: data.opexFirstIndexationDate ? data.opexFirstIndexationDate.slice(0, 10) : '',
+    opexIndexationFrequency: data.opexIndexationFrequency != null ? String(data.opexIndexationFrequency) : '',
     startDate: data.startDate.slice(0, 10),
     endDate: data.endDate.slice(0, 10),
     securityDeposit: data.securityDeposit != null ? String(data.securityDeposit) : '',
@@ -90,9 +102,13 @@ const emptyState: FormState = {
   baseRent: '',
   indexationType: 'CPI',
   indexationRate: '',
+  firstIndexationDate: '',
+  indexationFrequency: '',
   opexReimbursementRate: '',
   opexReimbursementIndexationType: 'NONE',
   opexReimbursementIndexationRate: '',
+  opexFirstIndexationDate: '',
+  opexIndexationFrequency: '',
   startDate: '',
   endDate: '',
   securityDeposit: '',
@@ -163,9 +179,13 @@ export function LeaseForm({ propertyId, initialData, onSuccess, onCancel }: Prop
       baseRent,
       indexationType: form.indexationType,
       indexationRate,
+      firstIndexationDate: form.firstIndexationDate !== '' ? form.firstIndexationDate : null,
+      indexationFrequency: form.indexationFrequency !== '' ? parseInt(form.indexationFrequency, 10) : null,
       opexReimbursementRate,
       opexReimbursementIndexationType: form.opexReimbursementIndexationType,
       opexReimbursementIndexationRate,
+      opexFirstIndexationDate: form.opexFirstIndexationDate !== '' ? form.opexFirstIndexationDate : null,
+      opexIndexationFrequency: form.opexIndexationFrequency !== '' ? parseInt(form.opexIndexationFrequency, 10) : null,
       startDate: form.startDate,
       endDate: form.endDate,
       securityDeposit,
@@ -335,6 +355,35 @@ export function LeaseForm({ propertyId, initialData, onSuccess, onCancel }: Prop
             />
           </div>
         )}
+
+        {form.indexationType !== 'NONE' && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Дата первой индексации</label>
+              <input
+                type="date"
+                value={form.firstIndexationDate}
+                onChange={e => set('firstIndexationDate', e.target.value)}
+                className={inputCls}
+                disabled={loading}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Частота индексации</label>
+              <select
+                value={form.indexationFrequency}
+                onChange={e => set('indexationFrequency', e.target.value)}
+                className={inputCls + ' bg-white'}
+                disabled={loading}
+              >
+                <option value="">— ежегодно —</option>
+                <option value="3">3 месяца</option>
+                <option value="6">6 месяцев</option>
+                <option value="12">12 месяцев</option>
+              </select>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Возмещение OPEX */}
@@ -388,6 +437,35 @@ export function LeaseForm({ propertyId, initialData, onSuccess, onCancel }: Prop
               className={inputCls}
               disabled={loading}
             />
+          </div>
+        )}
+
+        {form.opexReimbursementIndexationType !== 'NONE' && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Дата первой индексации (OPEX)</label>
+              <input
+                type="date"
+                value={form.opexFirstIndexationDate}
+                onChange={e => set('opexFirstIndexationDate', e.target.value)}
+                className={inputCls}
+                disabled={loading}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Частота индексации (OPEX)</label>
+              <select
+                value={form.opexIndexationFrequency}
+                onChange={e => set('opexIndexationFrequency', e.target.value)}
+                className={inputCls + ' bg-white'}
+                disabled={loading}
+              >
+                <option value="">— ежегодно —</option>
+                <option value="3">3 месяца</option>
+                <option value="6">6 месяцев</option>
+                <option value="12">12 месяцев</option>
+              </select>
+            </div>
           </div>
         )}
       </div>
