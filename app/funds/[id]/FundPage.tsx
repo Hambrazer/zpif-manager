@@ -5,10 +5,17 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { PropertyForm } from '@/components/forms/PropertyForm'
 import { FundCashflowBlock } from './FundCashflowBlock'
+import { FundChartsBlock } from './FundChartsBlock'
 import { PropertiesTable } from '@/components/tables/PropertiesTable'
 import { NavChart } from '@/components/charts/NavChart'
+import type { ReturnPoint } from '@/components/charts/ReturnChart'
 import { formatRub, formatPct, formatDate } from '@/lib/utils/format'
-import type { NAVResult, ApiResponse } from '@/lib/types'
+import type {
+  NAVResult,
+  ApiResponse,
+  MonthlyCashflow,
+  MonthlyCashRoll,
+} from '@/lib/types'
 
 // ─── Типы ─────────────────────────────────────────────────────────────────────
 
@@ -47,18 +54,104 @@ const PERIODICITY_LABELS: Record<FundData['distributionPeriodicity'], string> = 
   ANNUAL: 'Ежегодно',
 }
 
+// ─── Вспомогательные функции ──────────────────────────────────────────────────
+
+function aggregatePropertyCashflows(
+  propertyCashflows: Record<string, MonthlyCashflow[]>,
+): MonthlyCashflow[] {
+  const values = Object.values(propertyCashflows)
+  if (values.length === 0) return []
+  const first = values[0]!
+  return first.map((baseCf, i) => {
+    const agg = { ...baseCf, tenants: [...baseCf.tenants] }
+    for (let j = 1; j < values.length; j++) {
+      const cf = values[j]![i]!
+      agg.gri += cf.gri
+      agg.vacancy += cf.vacancy
+      agg.nri += cf.nri
+      agg.opexReimbursementTotal += cf.opexReimbursementTotal
+      agg.opex += cf.opex
+      agg.propertyTax += cf.propertyTax
+      agg.landTax += cf.landTax
+      agg.maintenance += cf.maintenance
+      agg.capex += cf.capex
+      agg.noi += cf.noi
+      agg.fcf += cf.fcf
+      agg.tenants = [...agg.tenants, ...cf.tenants]
+    }
+    return agg
+  })
+}
+
+function buildReturnPoints(
+  navData: NAVResult[],
+  cashRoll: MonthlyCashRoll[],
+  totalEmission: number,
+): ReturnPoint[] {
+  if (totalEmission <= 0 || navData.length === 0) return []
+
+  const distByYear = new Map<number, number>()
+  for (const row of cashRoll) {
+    const y = row.period.year
+    distByYear.set(y, (distByYear.get(y) ?? 0) + row.distributionOutflow)
+  }
+
+  const navByYear = new Map<number, number>()
+  for (const n of navData) {
+    navByYear.set(n.period.year, n.nav)
+  }
+
+  const years = Array.from(new Set(navData.map(n => n.period.year))).sort((a, b) => a - b)
+  if (years.length < 2) return []
+
+  const points: ReturnPoint[] = []
+  for (let i = 1; i < years.length; i++) {
+    const year = years[i]!
+    const navEnd = navByYear.get(year) ?? 0
+    const navBegin = navByYear.get(years[i - 1]!) ?? 0
+    const cashOnCash = (distByYear.get(year) ?? 0) / totalEmission
+    const capitalGain = (navEnd - navBegin) / totalEmission
+    points.push({ year, cashOnCash, capitalGain })
+  }
+  return points
+}
+
 // ─── Компонент ────────────────────────────────────────────────────────────────
 
 export function FundPage({ fund }: Props) {
   const router = useRouter()
   const [showAddProperty, setShowAddProperty] = useState(false)
   const [navData, setNavData] = useState<NAVResult[] | null>(null)
+  const [cashflows, setCashflows] = useState<MonthlyCashflow[]>([])
+  const [cashRoll, setCashRoll] = useState<MonthlyCashRoll[]>([])
+  const [cfLoading, setCfLoading] = useState(true)
+  const [cfError, setCfError] = useState<string | null>(null)
 
   useEffect(() => {
     fetch(`/api/nav/fund/${fund.id}`)
       .then(r => r.json() as Promise<ApiResponse<NAVResult[]>>)
       .then(json => { if (!json.error) setNavData(json.data) })
       .catch(() => { /* навигационные ошибки не блокируют страницу */ })
+  }, [fund.id])
+
+  useEffect(() => {
+    setCfLoading(true)
+    setCfError(null)
+
+    fetch(`/api/cashflow/fund/${fund.id}`)
+      .then(r => r.json() as Promise<ApiResponse<{
+        cashRoll: MonthlyCashRoll[]
+        propertyCashflows: Record<string, MonthlyCashflow[]>
+      }>>)
+      .then(json => {
+        if (json.error) throw new Error(json.error)
+        setCashRoll(json.data.cashRoll)
+        setCashflows(aggregatePropertyCashflows(json.data.propertyCashflows))
+      })
+      .catch((err: unknown) => {
+        setCfError(err instanceof Error ? err.message : 'Ошибка загрузки данных')
+      })
+      .finally(() => setCfLoading(false))
   }, [fund.id])
 
   function handlePropertyAdded() {
@@ -70,6 +163,10 @@ export function FundPage({ fund }: Props) {
     (s, p) => s + (p.acquisitionPrice ?? 0),
     0,
   )
+
+  const returnPoints = navData && cashRoll.length > 0
+    ? buildReturnPoints(navData, cashRoll, fund.totalEmission)
+    : []
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -131,25 +228,50 @@ export function FundPage({ fund }: Props) {
           </div>
         </div>
 
-        {/* ── СЧА / РСП — график ── */}
+        {/* ── Блок 1: СЧА / РСП ── */}
         <section className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-base font-semibold text-gray-900 mb-4">Динамика СЧА и РСП</h2>
           <NavChart data={navData ?? []} />
         </section>
 
-        {/* ── Денежный поток фонда ── */}
+        {/* ── Блок 2: Графики денежного потока ── */}
         <section className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-6">Денежный поток фонда</h2>
-          <FundCashflowBlock
-            fundId={fund.id}
-            totalAcquisitionPrice={totalAcquisitionPrice}
-            totalEmission={fund.totalEmission}
-            totalUnits={fund.totalUnits}
-            navData={navData}
-          />
+          <h2 className="text-base font-semibold text-gray-900 mb-4">Денежный поток фонда</h2>
+          {cfLoading ? (
+            <div className="flex items-center justify-center h-48 text-sm text-gray-400">
+              <span className="animate-pulse">Расчёт денежного потока…</span>
+            </div>
+          ) : cfError ? (
+            <div className="rounded-md bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-600">
+              {cfError}
+            </div>
+          ) : (
+            <FundChartsBlock cashflows={cashflows} returnPoints={returnPoints} />
+          )}
         </section>
 
-        {/* ── Объекты фонда ── */}
+        {/* ── Блок 3: Таблицы денежных потоков ── */}
+        <section className="bg-white rounded-lg border border-gray-200 p-6">
+          <h2 className="text-base font-semibold text-gray-900 mb-4">Таблица денежных потоков</h2>
+          {cfLoading ? (
+            <div className="flex items-center justify-center h-48 text-sm text-gray-400">
+              <span className="animate-pulse">Расчёт денежного потока…</span>
+            </div>
+          ) : cfError ? (
+            <div className="rounded-md bg-red-50 border border-red-100 px-4 py-3 text-sm text-red-600">
+              {cfError}
+            </div>
+          ) : (
+            <FundCashflowBlock
+              cashflows={cashflows}
+              cashRoll={cashRoll}
+              totalAcquisitionPrice={totalAcquisitionPrice}
+              navData={navData}
+            />
+          )}
+        </section>
+
+        {/* ── Блок 4: Объекты фонда ── */}
         <section>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900">
