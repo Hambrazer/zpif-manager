@@ -15,6 +15,13 @@ export type MonthlyPeriod = {
 
 // ─── Входные данные для расчётов ─────────────────────────────────────────────
 
+export type LeaseStepRentInput = {
+  startDate: Date
+  endDate: Date
+  rentRate: number                              // ₽/м²/год на этом периоде
+  indexAfterEnd: boolean                        // индексировать от этой ступени если следующей нет
+}
+
 export type LeaseInput = {
   id: string
   tenantName: string
@@ -31,6 +38,7 @@ export type LeaseInput = {
   opexReimbursementIndexationRate: number | null
   opexFirstIndexationDate?: Date | null         // первая дата индексации возмещения OPEX
   opexIndexationFrequency?: number | null       // частота в месяцах: 3 / 6 / 12
+  stepRents?: LeaseStepRentInput[]              // лестничная ставка (опционально)
   status: LeaseStatus
 }
 

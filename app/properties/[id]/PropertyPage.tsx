@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { Fragment, useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { formatRub, formatPct, formatDate } from '@/lib/utils/format'
-import { LeaseForm } from '@/components/forms/LeaseForm'
+import { PropertyForm } from '@/components/forms/PropertyForm'
+import { StepRentModal } from '@/components/modals/StepRentModal'
 import { GanttChart } from '@/components/charts/GanttChart'
 import type { GanttLease } from '@/components/charts/GanttChart'
 import { exportRentRollToExcel } from '@/lib/utils/exportRentRoll'
@@ -33,12 +34,6 @@ const LEASE_STATUS_STYLES: Record<LeaseStatus, { label: string; cls: string }> =
   TERMINATING: { label: 'Расторгается', cls: 'bg-yellow-100 text-yellow-700' },
 }
 
-const INDEXATION_LABELS: Record<IndexationType, string> = {
-  CPI:   'ИПЦ',
-  FIXED: 'Фикс.',
-  NONE:  'Нет',
-}
-
 type LeaseContract = {
   id: string
   tenantName: string
@@ -62,6 +57,8 @@ type LeaseContract = {
   vatIncluded: boolean
 }
 
+type TerminalType = 'EXIT_CAP_RATE' | 'GORDON'
+
 type PropertyData = {
   id: string
   fundId: string
@@ -77,19 +74,53 @@ type PropertyData = {
   purchaseDate: string | null
   saleDate: string | null
   exitCapRate: number | null
+  wacc: number
+  projectionYears: number
+  terminalType: TerminalType
+  gordonGrowthRate: number | null
+  cadastralValue: number | null
+  landCadastralValue: number | null
+  propertyTaxRate: number
+  landTaxRate: number
+  opexRate: number
+  maintenanceRate: number
   wault: number
   leaseContracts: LeaseContract[]
 }
 
-type Tab = 'tenants' | 'cashflow'
+type Tab = 'main' | 'tenants' | 'expenses' | 'capex' | 'debt' | 'cashflow' | 'reports'
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'tenants',  label: 'Арендаторы'    },
+  { id: 'main',     label: 'Основное'       },
+  { id: 'tenants',  label: 'Арендаторы'     },
+  { id: 'expenses', label: 'Расходы'        },
+  { id: 'capex',    label: 'CAPEX'          },
+  { id: 'debt',     label: 'Долг'           },
   { id: 'cashflow', label: 'Денежный поток' },
+  { id: 'reports',  label: 'Отчёты'         },
 ]
 
 export function PropertyPage({ property }: { property: PropertyData }) {
-  const [activeTab, setActiveTab] = useState<Tab>('tenants')
+  const [activeTab, setActiveTab] = useState<Tab>('main')
+
+  // CF загружается на уровне страницы — разделяется между вкладками
+  // «Расходы» и «Денежный поток» (V3.6.2: «без дополнительного fetch»).
+  const [cashflows, setCashflows] = useState<MonthlyCashflow[]>([])
+  const [cfLoading, setCfLoading] = useState(true)
+  const [cfError, setCfError]     = useState<string | null>(null)
+
+  useEffect(() => {
+    setCfLoading(true)
+    setCfError(null)
+    fetch(`/api/cashflow/property/${property.id}`)
+      .then(async res => {
+        const json = await res.json() as { data?: MonthlyCashflow[]; error?: string }
+        if (!res.ok) throw new Error(json.error ?? 'Ошибка загрузки')
+        setCashflows(json.data ?? [])
+      })
+      .catch(err => setCfError(err instanceof Error ? err.message : 'Ошибка загрузки'))
+      .finally(() => setCfLoading(false))
+  }, [property.id])
 
   const activeCount = property.leaseContracts.filter(l => l.status === 'ACTIVE').length
 
@@ -174,7 +205,8 @@ export function PropertyPage({ property }: { property: PropertyData }) {
           </div>
 
           <div className="mt-6">
-            {activeTab === 'tenants'  && (
+            {activeTab === 'main' && <MainTab property={property} />}
+            {activeTab === 'tenants' && (
               <TenantsTab
                 leases={property.leaseContracts}
                 propertyId={property.id}
@@ -185,15 +217,24 @@ export function PropertyPage({ property }: { property: PropertyData }) {
                 fundEndDate={property.fundEndDate}
               />
             )}
+            {activeTab === 'expenses' && (
+              <ExpensesTab cashflows={cashflows} loading={cfLoading} error={cfError} />
+            )}
+            {activeTab === 'capex' && <PlaceholderTab text="Раздел CAPEX будет добавлен в следующей версии." />}
+            {activeTab === 'debt' && <PlaceholderTab text="Долг на уровне объекта будет добавлен в следующей версии." />}
             {activeTab === 'cashflow' && (
-            <CashflowTab
-              propertyId={property.id}
-              acquisitionPrice={property.acquisitionPrice}
-              purchaseDate={property.purchaseDate}
-              saleDate={property.saleDate}
-              exitCapRate={property.exitCapRate}
-            />
-          )}
+              <CashflowTab
+                propertyId={property.id}
+                acquisitionPrice={property.acquisitionPrice}
+                purchaseDate={property.purchaseDate}
+                saleDate={property.saleDate}
+                exitCapRate={property.exitCapRate}
+                cashflows={cashflows}
+                cfLoading={cfLoading}
+                cfError={cfError}
+              />
+            )}
+            {activeTab === 'reports' && <PlaceholderTab text="Раздел отчётов будет добавлен в следующей версии." />}
           </div>
         </div>
       </main>
@@ -201,7 +242,68 @@ export function PropertyPage({ property }: { property: PropertyData }) {
   )
 }
 
-// ─── Вкладка 1: Арендаторы ────────────────────────────────────────────────────
+// ─── Вкладка 1: Арендаторы (V3.6.3 — inline-редактирование) ──────────────────
+
+type LeaseFormState = {
+  tenantName: string
+  area: string
+  baseRent: string
+  indexationType: IndexationType
+  indexationRate: string
+  firstIndexationDate: string
+  indexationFrequency: string
+  opexReimbursementRate: string
+  opexReimbursementIndexationType: IndexationType
+  opexReimbursementIndexationRate: string
+  opexFirstIndexationDate: string
+  opexIndexationFrequency: string
+  startDate: string
+  endDate: string
+  status: LeaseStatus
+}
+
+const emptyLeaseFormState: LeaseFormState = {
+  tenantName: '',
+  area: '',
+  baseRent: '',
+  indexationType: 'CPI',
+  indexationRate: '',
+  firstIndexationDate: '',
+  indexationFrequency: '',
+  opexReimbursementRate: '',
+  opexReimbursementIndexationType: 'NONE',
+  opexReimbursementIndexationRate: '',
+  opexFirstIndexationDate: '',
+  opexIndexationFrequency: '',
+  startDate: '',
+  endDate: '',
+  status: 'ACTIVE',
+}
+
+function leaseToFormState(lease: LeaseContract): LeaseFormState {
+  return {
+    tenantName: lease.tenantName,
+    area: String(lease.area),
+    baseRent: String(lease.baseRent),
+    indexationType: lease.indexationType,
+    indexationRate: lease.indexationRate != null ? String(+(lease.indexationRate * 100).toFixed(4)) : '',
+    firstIndexationDate: lease.firstIndexationDate ? lease.firstIndexationDate.slice(0, 10) : '',
+    indexationFrequency: lease.indexationFrequency != null ? String(lease.indexationFrequency) : '',
+    opexReimbursementRate: String(lease.opexReimbursementRate),
+    opexReimbursementIndexationType: lease.opexReimbursementIndexationType,
+    opexReimbursementIndexationRate: lease.opexReimbursementIndexationRate != null
+      ? String(+(lease.opexReimbursementIndexationRate * 100).toFixed(4))
+      : '',
+    opexFirstIndexationDate: lease.opexFirstIndexationDate ? lease.opexFirstIndexationDate.slice(0, 10) : '',
+    opexIndexationFrequency: lease.opexIndexationFrequency != null ? String(lease.opexIndexationFrequency) : '',
+    startDate: lease.startDate.slice(0, 10),
+    endDate: lease.endDate.slice(0, 10),
+    status: lease.status,
+  }
+}
+
+const tInputCls = 'w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50'
+const tLabelCls = 'block text-xs font-medium text-gray-600 mb-0.5'
 
 function TenantsTab({
   leases,
@@ -221,49 +323,143 @@ function TenantsTab({
   fundEndDate: string
 }) {
   const router = useRouter()
-  const [showAdd, setShowAdd]             = useState(false)
-  const [editingLease, setEditingLease]   = useState<LeaseContract | null>(null)
-  const [deletingId, setDeletingId]       = useState<string | null>(null)
-  const [deleteError, setDeleteError]     = useState<string | null>(null)
+  // 'new' — добавление нового арендатора, lease.id — редактирование существующего
+  const [expandedId, setExpandedId]   = useState<string | null>(null)
+  const [form, setForm]               = useState<LeaseFormState>(emptyLeaseFormState)
+  const [saving, setSaving]           = useState(false)
+  const [saveError, setSaveError]     = useState<string | null>(null)
+  const [deletingId, setDeletingId]   = useState<string | null>(null)
+  // V3.6.4: целевой договор для модала «Лестничная ставка». null — модал закрыт.
+  const [stepRentLease, setStepRentLease] = useState<{ id: string; tenantName: string } | null>(null)
 
-  function handleExport() {
-    exportRentRollToExcel(leases, rentableArea, wault, propertyName)
+  function startAdd() {
+    setForm(emptyLeaseFormState)
+    setExpandedId('new')
+    setSaveError(null)
   }
 
-  function handleAdded() {
-    setShowAdd(false)
-    router.refresh()
+  function expand(lease: LeaseContract) {
+    setForm(leaseToFormState(lease))
+    setExpandedId(lease.id)
+    setSaveError(null)
   }
 
-  function handleEdited() {
-    setEditingLease(null)
-    router.refresh()
+  function collapse() {
+    setExpandedId(null)
+    setSaveError(null)
+  }
+
+  function setField<K extends keyof LeaseFormState>(field: K, value: LeaseFormState[K]) {
+    setForm(prev => ({ ...prev, [field]: value }))
+  }
+
+  async function handleSave() {
+    setSaveError(null)
+
+    const area = parseFloat(form.area)
+    const baseRent = parseFloat(form.baseRent)
+    const opexRate = parseFloat(form.opexReimbursementRate)
+
+    if (!form.tenantName.trim()) { setSaveError('Укажите арендатора'); return }
+    if (isNaN(area) || area <= 0) { setSaveError('Укажите корректную площадь'); return }
+    if (isNaN(baseRent) || baseRent <= 0) { setSaveError('Укажите базовую ставку аренды'); return }
+    if (!form.startDate || !form.endDate) { setSaveError('Укажите даты начала и окончания'); return }
+    if (form.endDate <= form.startDate) { setSaveError('Дата окончания должна быть позже начала'); return }
+    if (isNaN(opexRate) || opexRate < 0) { setSaveError('Укажите ставку возмещения OPEX (можно 0)'); return }
+
+    let indexationRate: number | null = null
+    if (form.indexationType === 'FIXED') {
+      const r = parseFloat(form.indexationRate)
+      if (isNaN(r) || r < 0) { setSaveError('Укажите ставку индексации аренды'); return }
+      indexationRate = r / 100
+    }
+
+    let opexIndexationRate: number | null = null
+    if (form.opexReimbursementIndexationType === 'FIXED') {
+      const r = parseFloat(form.opexReimbursementIndexationRate)
+      if (isNaN(r) || r < 0) { setSaveError('Укажите ставку индексации OPEX'); return }
+      opexIndexationRate = r / 100
+    }
+
+    const body = {
+      propertyId,
+      tenantName: form.tenantName.trim(),
+      area,
+      baseRent,
+      indexationType: form.indexationType,
+      indexationRate,
+      firstIndexationDate: form.firstIndexationDate !== '' ? form.firstIndexationDate : null,
+      indexationFrequency: form.indexationFrequency !== '' ? parseInt(form.indexationFrequency, 10) : null,
+      opexReimbursementRate: opexRate,
+      opexReimbursementIndexationType: form.opexReimbursementIndexationType,
+      opexReimbursementIndexationRate: opexIndexationRate,
+      opexFirstIndexationDate: form.opexFirstIndexationDate !== '' ? form.opexFirstIndexationDate : null,
+      opexIndexationFrequency: form.opexIndexationFrequency !== '' ? parseInt(form.opexIndexationFrequency, 10) : null,
+      startDate: form.startDate,
+      endDate: form.endDate,
+      status: form.status,
+    }
+
+    const isNew = expandedId === 'new'
+    setSaving(true)
+    try {
+      const url = isNew ? '/api/leases' : `/api/leases/${expandedId}`
+      const method = isNew ? 'POST' : 'PUT'
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const json = await res.json() as { error?: string }
+        setSaveError(json.error ?? 'Ошибка сохранения')
+        return
+      }
+      setExpandedId(null)
+      router.refresh()
+    } catch {
+      setSaveError('Ошибка сети')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function handleDelete(lease: LeaseContract) {
     if (!window.confirm(`Удалить договор с «${lease.tenantName}»?`)) return
     setDeletingId(lease.id)
-    setDeleteError(null)
     try {
       const res = await fetch(`/api/leases/${lease.id}`, { method: 'DELETE' })
       if (!res.ok) {
         const json = await res.json() as { error?: string }
-        setDeleteError(json.error ?? 'Ошибка удаления')
+        alert(json.error ?? 'Ошибка удаления')
         return
       }
+      collapse()
       router.refresh()
     } catch {
-      setDeleteError('Ошибка сети')
+      alert('Ошибка сети')
     } finally {
       setDeletingId(null)
     }
   }
 
-  const totalArea        = leases.reduce((s, l) => s + l.area, 0)
-  const totalAnnualIncome = leases.reduce((s, l) => s + l.area * l.baseRent, 0)
+  function handleExport() {
+    exportRentRollToExcel(leases, rentableArea, wault, propertyName)
+  }
+
+  function triggerStepRent(lease: LeaseContract | null) {
+    // V3.6.4: модал доступен только для уже сохранённого договора.
+    // Для нового арендатора («new») сначала нужно сохранить.
+    if (lease === null) {
+      alert('Сначала сохраните арендатора, затем настройте лестничную ставку.')
+      return
+    }
+    setStepRentLease({ id: lease.id, tenantName: lease.tenantName })
+  }
 
   return (
     <div className="space-y-4">
+      {/* WAULT + Экспорт + Добавить */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-600">
@@ -279,162 +475,128 @@ function TenantsTab({
             Экспорт Excel
           </button>
         </div>
-        <div className="flex items-center gap-3">
-          {deleteError && (
-            <p className="text-sm text-red-600">{deleteError}</p>
-          )}
-          <button
-            onClick={() => setShowAdd(true)}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            + Добавить договор
-          </button>
-        </div>
+        <button
+          onClick={startAdd}
+          disabled={expandedId === 'new'}
+          className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          + Добавить арендатора
+        </button>
       </div>
 
-      {leases.length === 0 ? (
-        <div className="bg-white rounded-lg border border-gray-200 py-16 text-center text-gray-400">
-          <p className="text-base">Договоров аренды нет</p>
-          <p className="text-sm mt-1">Добавьте первый договор</p>
-        </div>
-      ) : (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm whitespace-nowrap">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 font-medium uppercase tracking-wide">
-                  <th className="text-left px-4 py-3">Арендатор</th>
-                  <th className="text-right px-4 py-3">Площадь, м²</th>
-                  <th className="text-right px-4 py-3">Ставка, ₽/м²/год</th>
-                  <th className="text-right px-4 py-3">Доход, ₽/год</th>
-                  <th className="text-left px-4 py-3">Начало</th>
-                  <th className="text-left px-4 py-3">Окончание</th>
-                  <th className="text-left px-4 py-3">Статус</th>
-                  <th className="text-left px-4 py-3">Индексация</th>
-                  <th className="text-left px-4 py-3">Опционы</th>
-                  <th className="px-4 py-3" />
+      {/* Модал лестничной ставки (V3.6.4) */}
+      {stepRentLease !== null && (
+        <StepRentModal
+          leaseId={stepRentLease.id}
+          tenantName={stepRentLease.tenantName}
+          onClose={() => setStepRentLease(null)}
+          onSaved={() => {
+            setStepRentLease(null)
+            router.refresh()
+          }}
+        />
+      )}
+
+      {/* Таблица арендаторов */}
+      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm whitespace-nowrap">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 font-medium uppercase tracking-wide">
+                <th className="text-left px-4 py-3">Арендатор</th>
+                <th className="text-right px-4 py-3">Площадь, м²</th>
+                <th className="text-right px-4 py-3">Ставка, ₽/м²/год</th>
+                <th className="text-left px-4 py-3">Статус</th>
+                <th className="text-left px-4 py-3">Начало</th>
+                <th className="text-left px-4 py-3">Окончание</th>
+                <th className="px-4 py-3 w-8" />
+              </tr>
+            </thead>
+            <tbody>
+              {expandedId === 'new' && (
+                <Fragment>
+                  <tr className="border-b border-gray-100 bg-blue-50/30">
+                    <td colSpan={7} className="px-4 py-2 italic text-xs text-blue-700">
+                      Новый арендатор — заполните поля ниже
+                    </td>
+                  </tr>
+                  <LeaseExpandedRow
+                    form={form}
+                    setField={setField}
+                    saving={saving}
+                    saveError={saveError}
+                    onSave={() => void handleSave()}
+                    onCancel={collapse}
+                    onStepRent={() => triggerStepRent(null)}
+                  />
+                </Fragment>
+              )}
+
+              {leases.length === 0 && expandedId !== 'new' && (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-gray-400">
+                    Договоров аренды нет — нажмите «+ Добавить арендатора»
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {leases.map(lease => {
-                  const st = LEASE_STATUS_STYLES[lease.status]
-                  const isDeleting = deletingId === lease.id
-                  return (
+              )}
+
+              {leases.map(lease => {
+                const isExpanded = expandedId === lease.id
+                const isDeleting = deletingId === lease.id
+                const st = LEASE_STATUS_STYLES[lease.status]
+                return (
+                  <Fragment key={lease.id}>
                     <tr
-                      key={lease.id}
-                      className={`border-b border-gray-50 last:border-0 transition-colors ${
-                        isDeleting ? 'opacity-40' : 'hover:bg-gray-50'
+                      onClick={() => isExpanded ? collapse() : expand(lease)}
+                      className={`border-b border-gray-100 cursor-pointer transition-colors ${
+                        isExpanded ? 'bg-blue-50/30' : isDeleting ? 'opacity-40' : 'hover:bg-gray-50'
                       }`}
                     >
-                      {/* Арендатор */}
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-gray-900">{lease.tenantName}</p>
-                        {lease.vatIncluded && (
-                          <p className="text-xs text-gray-400 mt-0.5">с НДС</p>
-                        )}
-                      </td>
-
-                      {/* Площадь */}
+                      <td className="px-4 py-3 font-medium text-gray-900">{lease.tenantName}</td>
                       <td className="px-4 py-3 text-right text-gray-700">
                         {lease.area.toLocaleString('ru-RU')}
                       </td>
-
-                      {/* Ставка */}
-                      <td className="px-4 py-3 text-right text-gray-700">
+                      <td
+                        className="px-4 py-3 text-right text-gray-700"
+                        onDoubleClick={e => {
+                          e.stopPropagation()
+                          triggerStepRent(lease)
+                        }}
+                        title="Двойной клик — лестничная ставка"
+                      >
                         {lease.baseRent.toLocaleString('ru-RU')}
                       </td>
-
-                      {/* Годовой доход */}
-                      <td className="px-4 py-3 text-right text-gray-700">
-                        {formatRub(lease.area * lease.baseRent)}
-                      </td>
-
-                      {/* Начало */}
-                      <td className="px-4 py-3 text-gray-600">
-                        {formatDate(lease.startDate)}
-                      </td>
-
-                      {/* Окончание */}
-                      <td className="px-4 py-3 text-gray-600">
-                        {formatDate(lease.endDate)}
-                      </td>
-
-                      {/* Статус */}
                       <td className="px-4 py-3">
                         <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${st.cls}`}>
                           {st.label}
                         </span>
                       </td>
-
-                      {/* Индексация */}
-                      <td className="px-4 py-3 text-gray-600">
-                        {INDEXATION_LABELS[lease.indexationType]}
-                        {lease.indexationType === 'FIXED' && lease.indexationRate !== null && (
-                          <span className="text-gray-400 ml-1">
-                            {formatPct(lease.indexationRate)}
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Опционы */}
-                      <td className="px-4 py-3">
-                        <div className="flex gap-1">
-                          {lease.renewalOption && (
-                            <span className="inline-flex text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
-                              Продл.
-                            </span>
-                          )}
-                          {lease.breakOption && (
-                            <span className="inline-flex text-xs bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded">
-                              Выход
-                            </span>
-                          )}
-                          {!lease.renewalOption && !lease.breakOption && (
-                            <span className="text-gray-300">—</span>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Действия */}
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <button
-                            onClick={() => setEditingLease(lease)}
-                            disabled={isDeleting}
-                            className="text-xs text-blue-600 hover:text-blue-800 disabled:opacity-40"
-                          >
-                            Изм.
-                          </button>
-                          <button
-                            onClick={() => void handleDelete(lease)}
-                            disabled={isDeleting}
-                            className="text-xs text-red-500 hover:text-red-700 disabled:opacity-40"
-                          >
-                            {isDeleting ? '…' : 'Удл.'}
-                          </button>
-                        </div>
+                      <td className="px-4 py-3 text-gray-600">{formatDate(lease.startDate)}</td>
+                      <td className="px-4 py-3 text-gray-600">{formatDate(lease.endDate)}</td>
+                      <td className="px-4 py-3 text-center text-gray-400 text-xs">
+                        {isExpanded ? '▼' : '▶'}
                       </td>
                     </tr>
-                  )
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="border-t border-gray-200 bg-gray-50 font-medium text-gray-700 text-sm">
-                  <td className="px-4 py-3">Итого</td>
-                  <td className="px-4 py-3 text-right">
-                    {totalArea.toLocaleString('ru-RU')}
-                  </td>
-                  <td className="px-4 py-3 text-right text-gray-300">—</td>
-                  <td className="px-4 py-3 text-right">
-                    {formatRub(totalAnnualIncome)}
-                  </td>
-                  <td colSpan={6} />
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+                    {isExpanded && (
+                      <LeaseExpandedRow
+                        form={form}
+                        setField={setField}
+                        saving={saving}
+                        saveError={saveError}
+                        onSave={() => void handleSave()}
+                        onCancel={collapse}
+                        onStepRent={() => triggerStepRent(lease)}
+                        onDelete={() => void handleDelete(lease)}
+                        isDeleting={isDeleting}
+                      />
+                    )}
+                  </Fragment>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
-      )}
+      </div>
 
       {/* График аренды */}
       {leases.length > 0 && (
@@ -449,58 +611,290 @@ function TenantsTab({
           />
         </div>
       )}
-
-      {/* Модал — добавить договор */}
-      {showAdd && (
-        <LeaseModal
-          title="Добавить договор аренды"
-          onClose={() => setShowAdd(false)}
-        >
-          <LeaseForm
-            propertyId={propertyId}
-            onSuccess={handleAdded}
-            onCancel={() => setShowAdd(false)}
-          />
-        </LeaseModal>
-      )}
-
-      {/* Модал — редактировать договор */}
-      {editingLease && (
-        <LeaseModal
-          title={`Изменить договор — ${editingLease.tenantName}`}
-          onClose={() => setEditingLease(null)}
-        >
-          <LeaseForm
-            propertyId={propertyId}
-            initialData={{ ...editingLease, propertyId }}
-            onSuccess={handleEdited}
-            onCancel={() => setEditingLease(null)}
-          />
-        </LeaseModal>
-      )}
     </div>
   )
 }
 
-function LeaseModal({
-  title,
-  onClose,
-  children,
+// ─── Развёрнутая панель строки арендатора ────────────────────────────────────
+
+function LeaseExpandedRow({
+  form,
+  setField,
+  saving,
+  saveError,
+  onSave,
+  onCancel,
+  onStepRent,
+  onDelete,
+  isDeleting,
 }: {
-  title: string
-  onClose: () => void
-  children: React.ReactNode
+  form: LeaseFormState
+  setField: <K extends keyof LeaseFormState>(field: K, value: LeaseFormState[K]) => void
+  saving: boolean
+  saveError: string | null
+  onSave: () => void
+  onCancel: () => void
+  onStepRent: () => void
+  onDelete?: () => void
+  isDeleting?: boolean
 }) {
   return (
-    <div
-      className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}
-    >
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">{title}</h2>
-        {children}
-      </div>
-    </div>
+    <tr className="bg-blue-50/30 border-b border-gray-200">
+      <td colSpan={7} className="px-4 py-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-3">
+
+          {/* Левая колонка — Аренда */}
+          <div className="space-y-3">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Аренда</p>
+
+            <div>
+              <label className={tLabelCls}>Арендатор</label>
+              <input
+                type="text"
+                value={form.tenantName}
+                onChange={e => setField('tenantName', e.target.value)}
+                className={tInputCls}
+                disabled={saving}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={tLabelCls}>Площадь, м²</label>
+                <input
+                  type="number"
+                  value={form.area}
+                  onChange={e => setField('area', e.target.value)}
+                  min="0"
+                  step="0.1"
+                  className={tInputCls}
+                  disabled={saving}
+                />
+              </div>
+              <div>
+                <label className={tLabelCls}>Ставка аренды, ₽/м²/год</label>
+                <input
+                  type="number"
+                  value={form.baseRent}
+                  onChange={e => setField('baseRent', e.target.value)}
+                  onDoubleClick={onStepRent}
+                  title="Двойной клик — лестничная ставка"
+                  min="0"
+                  step="1"
+                  className={tInputCls}
+                  disabled={saving}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={tLabelCls}>Тип индексации</label>
+                <select
+                  value={form.indexationType}
+                  onChange={e => setField('indexationType', e.target.value as IndexationType)}
+                  className={tInputCls + ' bg-white'}
+                  disabled={saving}
+                >
+                  <option value="CPI">ИПЦ</option>
+                  <option value="FIXED">Фиксированная</option>
+                  <option value="NONE">Нет</option>
+                </select>
+              </div>
+              {form.indexationType === 'FIXED' && (
+                <div>
+                  <label className={tLabelCls}>Ставка индексации, %</label>
+                  <input
+                    type="number"
+                    value={form.indexationRate}
+                    onChange={e => setField('indexationRate', e.target.value)}
+                    min="0"
+                    step="0.01"
+                    className={tInputCls}
+                    disabled={saving}
+                  />
+                </div>
+              )}
+            </div>
+
+            {form.indexationType !== 'NONE' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={tLabelCls}>Дата первой индексации</label>
+                  <input
+                    type="date"
+                    value={form.firstIndexationDate}
+                    onChange={e => setField('firstIndexationDate', e.target.value)}
+                    className={tInputCls}
+                    disabled={saving}
+                  />
+                </div>
+                <div>
+                  <label className={tLabelCls}>Частота индексации</label>
+                  <select
+                    value={form.indexationFrequency}
+                    onChange={e => setField('indexationFrequency', e.target.value)}
+                    className={tInputCls + ' bg-white'}
+                    disabled={saving}
+                  >
+                    <option value="">— ежегодно —</option>
+                    <option value="3">3 мес</option>
+                    <option value="6">6 мес</option>
+                    <option value="12">12 мес</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className={tLabelCls}>Статус</label>
+                <select
+                  value={form.status}
+                  onChange={e => setField('status', e.target.value as LeaseStatus)}
+                  className={tInputCls + ' bg-white'}
+                  disabled={saving}
+                >
+                  <option value="ACTIVE">Действующий</option>
+                  <option value="TERMINATING">Расторгается</option>
+                  <option value="EXPIRED">Истёк</option>
+                </select>
+              </div>
+              <div>
+                <label className={tLabelCls}>Дата начала</label>
+                <input
+                  type="date"
+                  value={form.startDate}
+                  onChange={e => setField('startDate', e.target.value)}
+                  className={tInputCls}
+                  disabled={saving}
+                />
+              </div>
+              <div>
+                <label className={tLabelCls}>Дата окончания</label>
+                <input
+                  type="date"
+                  value={form.endDate}
+                  onChange={e => setField('endDate', e.target.value)}
+                  className={tInputCls}
+                  disabled={saving}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Правая колонка — Возмещение OPEX */}
+          <div className="space-y-3">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Возмещение OPEX</p>
+
+            <div>
+              <label className={tLabelCls}>Ставка OPEX возм., ₽/м²/год</label>
+              <input
+                type="number"
+                value={form.opexReimbursementRate}
+                onChange={e => setField('opexReimbursementRate', e.target.value)}
+                min="0"
+                step="1"
+                className={tInputCls}
+                disabled={saving}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={tLabelCls}>Тип индексации OPEX</label>
+                <select
+                  value={form.opexReimbursementIndexationType}
+                  onChange={e => setField('opexReimbursementIndexationType', e.target.value as IndexationType)}
+                  className={tInputCls + ' bg-white'}
+                  disabled={saving}
+                >
+                  <option value="CPI">ИПЦ</option>
+                  <option value="FIXED">Фиксированная</option>
+                  <option value="NONE">Нет</option>
+                </select>
+              </div>
+              {form.opexReimbursementIndexationType === 'FIXED' && (
+                <div>
+                  <label className={tLabelCls}>Ставка индексации, %</label>
+                  <input
+                    type="number"
+                    value={form.opexReimbursementIndexationRate}
+                    onChange={e => setField('opexReimbursementIndexationRate', e.target.value)}
+                    min="0"
+                    step="0.01"
+                    className={tInputCls}
+                    disabled={saving}
+                  />
+                </div>
+              )}
+            </div>
+
+            {form.opexReimbursementIndexationType !== 'NONE' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={tLabelCls}>Дата первой инд. OPEX</label>
+                  <input
+                    type="date"
+                    value={form.opexFirstIndexationDate}
+                    onChange={e => setField('opexFirstIndexationDate', e.target.value)}
+                    className={tInputCls}
+                    disabled={saving}
+                  />
+                </div>
+                <div>
+                  <label className={tLabelCls}>Частота инд. OPEX</label>
+                  <select
+                    value={form.opexIndexationFrequency}
+                    onChange={e => setField('opexIndexationFrequency', e.target.value)}
+                    className={tInputCls + ' bg-white'}
+                    disabled={saving}
+                  >
+                    <option value="">— ежегодно —</option>
+                    <option value="3">3 мес</option>
+                    <option value="6">6 мес</option>
+                    <option value="12">12 мес</option>
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {saveError && (
+          <p className="text-sm text-red-600 mt-3">{saveError}</p>
+        )}
+
+        <div className="flex gap-3 mt-4 pt-3 border-t border-gray-200">
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saving}
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {saving ? 'Сохранение…' : 'Сохранить'}
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={saving}
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Отмена
+          </button>
+          {onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={saving || isDeleting}
+              className="ml-auto rounded-md border border-red-200 text-red-600 px-4 py-2 text-sm font-medium hover:bg-red-50 disabled:opacity-50"
+            >
+              {isDeleting ? 'Удаление…' : 'Удалить'}
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
   )
 }
 
@@ -520,17 +914,19 @@ function CashflowTab({
   purchaseDate,
   saleDate,
   exitCapRate,
+  cashflows,
+  cfLoading,
+  cfError,
 }: {
   propertyId: string
   acquisitionPrice: number | null
   purchaseDate: string | null
   saleDate: string | null
   exitCapRate: number | null
+  cashflows: MonthlyCashflow[]
+  cfLoading: boolean
+  cfError: string | null
 }) {
-  const [cashflows, setCashflows] = useState<MonthlyCashflow[]>([])
-  const [cfLoading, setCfLoading] = useState(true)
-  const [cfError, setCfError]     = useState<string | null>(null)
-
   const [dcf, setDcf]               = useState<DCFSummary | null>(null)
   const [dcfLoading, setDcfLoading] = useState(true)
   const [dcfError, setDcfError]     = useState<string | null>(null)
@@ -540,19 +936,6 @@ function CashflowTab({
   const [localCapRate, setLocalCapRate]   = useState<number | null>(null)
   const [capRateEdit, setCapRateEdit]     = useState(false)
   const [capRateInput, setCapRateInput]   = useState('')
-
-  useEffect(() => {
-    setCfLoading(true)
-    setCfError(null)
-    fetch(`/api/cashflow/property/${propertyId}`)
-      .then(async res => {
-        const json = await res.json() as { data?: MonthlyCashflow[]; error?: string }
-        if (!res.ok) throw new Error(json.error ?? 'Ошибка загрузки')
-        setCashflows(json.data ?? [])
-      })
-      .catch(err => setCfError(err instanceof Error ? err.message : 'Ошибка загрузки'))
-      .finally(() => setCfLoading(false))
-  }, [propertyId])
 
   useEffect(() => {
     setDcfLoading(true)
@@ -830,6 +1213,178 @@ function DcfMetric({
           {sublabel && <p className="text-xs text-gray-400 mt-0.5">{sublabel}</p>}
         </>
       )}
+    </div>
+  )
+}
+
+// ─── Вкладка «Основное» ──────────────────────────────────────────────────────
+
+function MainTab({ property }: { property: PropertyData }) {
+  const router = useRouter()
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-gray-900">Параметры объекта</p>
+        <p className="text-xs text-gray-400">
+          % владения фонда:{' '}
+          <span className="font-medium text-gray-700">100%</span>
+        </p>
+      </div>
+      <PropertyForm
+        fundId={property.fundId}
+        initialData={{
+          id: property.id,
+          fundId: property.fundId,
+          name: property.name,
+          type: property.type,
+          address: property.address,
+          totalArea: property.totalArea,
+          rentableArea: property.rentableArea,
+          cadastralValue: property.cadastralValue,
+          landCadastralValue: property.landCadastralValue,
+          propertyTaxRate: property.propertyTaxRate,
+          landTaxRate: property.landTaxRate,
+          opexRate: property.opexRate,
+          maintenanceRate: property.maintenanceRate,
+          acquisitionPrice: property.acquisitionPrice,
+          purchaseDate: property.purchaseDate,
+          saleDate: property.saleDate,
+          exitCapRate: property.exitCapRate,
+          wacc: property.wacc,
+          projectionYears: property.projectionYears,
+          terminalType: property.terminalType,
+          gordonGrowthRate: property.gordonGrowthRate,
+        }}
+        onSuccess={() => router.refresh()}
+      />
+    </div>
+  )
+}
+
+// ─── Вкладка «Расходы» ───────────────────────────────────────────────────────
+
+function ExpensesTab({
+  cashflows,
+  loading,
+  error,
+}: {
+  cashflows: MonthlyCashflow[]
+  loading: boolean
+  error: string | null
+}) {
+  if (loading) {
+    return <div className="py-12 text-center text-sm text-gray-400">Загрузка…</div>
+  }
+  if (error) {
+    return <div className="py-12 text-center text-sm text-red-500">{error}</div>
+  }
+  if (cashflows.length === 0) {
+    return <div className="py-12 text-center text-sm text-gray-400">Нет данных для отображения</div>
+  }
+
+  const MONTHS_SHORT = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'] as const
+
+  const yearGroups = new Map<number, number[]>()
+  cashflows.forEach((cf, idx) => {
+    const list = yearGroups.get(cf.period.year)
+    if (list) list.push(idx)
+    else yearGroups.set(cf.period.year, [idx])
+  })
+  const years = Array.from(yearGroups.entries()).sort(([a], [b]) => a - b)
+
+  const rows: { label: string; getValue: (cf: MonthlyCashflow) => number }[] = [
+    { label: 'OPEX',                getValue: cf => cf.opex },
+    { label: 'Эксплуатация',         getValue: cf => cf.maintenance },
+    { label: 'Налог на имущество',   getValue: cf => cf.propertyTax },
+    { label: 'Налог на ЗУ',          getValue: cf => cf.landTax },
+  ]
+
+  function formatExpense(raw: number): { text: string; cls: string } {
+    if (raw === 0) return { text: '—', cls: 'text-gray-300' }
+    const v = -raw
+    const abs = Math.abs(raw)
+    let text: string
+    if (abs >= 1_000_000) text = `${(v / 1_000_000).toFixed(1)} млн`
+    else if (abs >= 1_000) text = `${Math.round(v / 1_000)} тыс`
+    else text = Math.round(v).toLocaleString('ru-RU')
+    return { text, cls: 'text-red-500' }
+  }
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-4">
+      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">
+        Расчётные расходы объекта (помесячно)
+      </p>
+      <p className="text-xs text-gray-400 mb-3">
+        Ставки расходов редактируются на вкладке «Основное».
+      </p>
+      <div className="overflow-x-auto rounded-lg border border-gray-200">
+        <table className="text-sm border-collapse min-w-full">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-200">
+              <th
+                rowSpan={2}
+                className="sticky left-0 z-20 bg-gray-50 px-4 py-2 text-left text-xs font-medium text-gray-400 min-w-[200px] border-r border-gray-200"
+              >
+                Статья
+              </th>
+              {years.map(([y, idxs]) => (
+                <th
+                  key={y}
+                  colSpan={idxs.length}
+                  className="px-3 py-2 text-center text-xs font-semibold text-gray-600 border-r border-gray-100 last:border-r-0"
+                >
+                  {y}
+                </th>
+              ))}
+            </tr>
+            <tr className="bg-gray-50 border-b border-gray-200">
+              {cashflows.map((cf, idx) => (
+                <th
+                  key={idx}
+                  className="px-3 py-1.5 text-center text-xs font-medium text-gray-400 whitespace-nowrap min-w-[68px] border-r border-gray-100 last:border-r-0"
+                >
+                  {MONTHS_SHORT[cf.period.month - 1] ?? cf.period.month}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rowIdx) => {
+              const stripeBg = rowIdx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
+              return (
+                <tr key={row.label} className={`${stripeBg} border-b border-gray-100`}>
+                  <td className={`sticky left-0 z-10 px-4 py-2 text-left text-xs text-gray-600 whitespace-nowrap border-r border-gray-200 ${stripeBg}`}>
+                    {row.label}
+                  </td>
+                  {cashflows.map((cf, cfIdx) => {
+                    const { text, cls } = formatExpense(row.getValue(cf))
+                    return (
+                      <td
+                        key={cfIdx}
+                        className={`px-3 py-2 text-right whitespace-nowrap tabular-nums border-r border-gray-100 last:border-r-0 ${cls}`}
+                      >
+                        {text}
+                      </td>
+                    )
+                  })}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ─── Placeholder для вкладок без содержания ──────────────────────────────────
+
+function PlaceholderTab({ text }: { text: string }) {
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 py-20 text-center text-gray-400">
+      <p className="text-sm">{text}</p>
     </div>
   )
 }

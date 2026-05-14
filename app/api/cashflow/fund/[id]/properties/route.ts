@@ -43,7 +43,7 @@ export async function GET(_req: Request, { params }: Params) {
       include: {
         properties: {
           include: {
-            leaseContracts: true,
+            leaseContracts: { include: { stepRents: true } },
             capexItems: true,
           },
         },
@@ -83,6 +83,12 @@ export async function GET(_req: Request, { params }: Params) {
         opexReimbursementIndexationRate: lc.opexReimbursementIndexationRate,
         opexFirstIndexationDate: lc.opexFirstIndexationDate,
         opexIndexationFrequency: lc.opexIndexationFrequency,
+        stepRents: lc.stepRents.map(s => ({
+          startDate: s.startDate,
+          endDate: s.endDate,
+          rentRate: s.rentRate,
+          indexAfterEnd: s.indexAfterEnd,
+        })),
         status: lc.status as 'ACTIVE' | 'EXPIRED' | 'TERMINATING',
       }))
 

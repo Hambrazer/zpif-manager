@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { PropertyForm } from '@/components/forms/PropertyForm'
+import { PropertyCreateForm } from '@/components/forms/PropertyCreateForm'
 import { FundCashflowBlock } from './FundCashflowBlock'
 import { FundChartsBlock } from './FundChartsBlock'
 import { PropertiesTable } from '@/components/tables/PropertiesTable'
@@ -151,11 +151,6 @@ export function FundPage({ fund }: Props) {
       })
       .finally(() => setCfLoading(false))
   }, [fund.id])
-
-  function handlePropertyAdded() {
-    setShowAddProperty(false)
-    router.refresh()
-  }
 
   const totalAcquisitionPrice = fund.properties.reduce(
     (s, p) => s + (p.acquisitionPrice ?? 0),
@@ -310,9 +305,12 @@ export function FundPage({ fund }: Props) {
         >
           <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">Добавить объект</h2>
-            <PropertyForm
+            <PropertyCreateForm
               fundId={fund.id}
-              onSuccess={handlePropertyAdded}
+              onSuccess={(propertyId: string) => {
+                setShowAddProperty(false)
+                router.push(`/properties/${propertyId}`)
+              }}
               onCancel={() => setShowAddProperty(false)}
             />
           </div>

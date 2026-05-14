@@ -1,4 +1,5 @@
-import { calcIndexedRent } from '../../lib/calculations/indexation'
+import { calcIndexedRent, calcStepRent } from '../../lib/calculations/indexation'
+import type { LeaseStepRentInput } from '../../lib/types'
 
 // Все эталонные значения проверены вручную (формулы ниже).
 
@@ -290,5 +291,92 @@ describe('calcIndexedRent', () => {
       expect(withNullFirst).toBe(withoutFirst)
       expect(withNullFirst).toBeCloseTo(1102.5, 2)
     })
+  })
+})
+
+// ─── calcStepRent ─────────────────────────────────────────────────────────────
+
+describe('calcStepRent', () => {
+  const baseRent = 10_000
+  const leaseStart = new Date('2024-01-01')
+
+  function step(s: string, e: string, rate: number, indexAfterEnd = false): LeaseStepRentInput {
+    return { startDate: new Date(s), endDate: new Date(e), rentRate: rate, indexAfterEnd }
+  }
+
+  it('нет ступеней → стандартная индексация от baseRent', () => {
+    const r = calcStepRent(
+      baseRent, [], leaseStart, new Date('2025-01-01'),
+      'FIXED', 0.05, {}, null, null,
+    )
+    // 1 индексация в годовщину → 10500
+    expect(r).toBeCloseTo(10_500, 2)
+  })
+
+  it('targetDate внутри активной ступени → rentRate ступени, без индексации', () => {
+    const steps = [step('2024-01-01', '2024-12-31', 12_000)]
+    const r = calcStepRent(
+      baseRent, steps, leaseStart, new Date('2024-06-15'),
+      'FIXED', 0.05, {}, null, null,
+    )
+    expect(r).toBe(12_000)
+  })
+
+  it('targetDate после всех ступеней, indexAfterEnd=false → rentRate последней без индексации', () => {
+    const steps = [step('2024-01-01', '2024-12-31', 12_000, false)]
+    const r = calcStepRent(
+      baseRent, steps, leaseStart, new Date('2026-06-01'),
+      'FIXED', 0.05, {}, null, null,
+    )
+    expect(r).toBe(12_000)
+  })
+
+  it('targetDate после ступеней, indexAfterEnd=true → индексация от rentRate ступени, отсчёт от endDate', () => {
+    // ступень закончилась 2024-12-31, targetDate 2026-01-01
+    // отсчёт от 2024-12-31, годовщина 2025-12-31 — попадает в окно → 1 индексация
+    // 12 000 × 1.05 = 12 600
+    const steps = [step('2024-01-01', '2024-12-31', 12_000, true)]
+    const r = calcStepRent(
+      baseRent, steps, leaseStart, new Date('2026-01-01'),
+      'FIXED', 0.05, {}, null, null,
+    )
+    expect(r).toBeCloseTo(12_600, 2)
+  })
+
+  it('несколько ступеней: возвращает активную', () => {
+    const steps = [
+      step('2024-01-01', '2024-12-31', 12_000),
+      step('2025-01-01', '2025-12-31', 14_000),
+      step('2026-01-01', '2026-12-31', 16_000),
+    ]
+    expect(
+      calcStepRent(baseRent, steps, leaseStart, new Date('2025-07-01'),
+        'FIXED', 0.05, {}, null, null)
+    ).toBe(14_000)
+  })
+
+  it('targetDate раньше первой ступени → fallback к baseRent + индексация', () => {
+    // ступень начинается 2025-01-01, targetDate 2024-06-01 (год от lease start)
+    // нет годовщины ещё → baseRent
+    const steps = [step('2025-01-01', '2025-12-31', 14_000)]
+    const r = calcStepRent(
+      baseRent, steps, leaseStart, new Date('2024-06-01'),
+      'FIXED', 0.05, {}, null, null,
+    )
+    expect(r).toBe(baseRent)
+  })
+
+  it('после нескольких ступеней с indexAfterEnd=true у последней → база = последняя ступень', () => {
+    const steps = [
+      step('2024-01-01', '2024-12-31', 12_000, false),
+      step('2025-01-01', '2025-12-31', 14_000, true),
+    ]
+    // последняя закончилась 2025-12-31, target 2027-01-01 → отсчёт от 2025-12-31
+    // годовщина 2026-12-31 попадает → 1 индексация: 14 000 × 1.05 = 14 700
+    const r = calcStepRent(
+      baseRent, steps, leaseStart, new Date('2027-01-01'),
+      'FIXED', 0.05, {}, null, null,
+    )
+    expect(r).toBeCloseTo(14_700, 2)
   })
 })

@@ -33,7 +33,7 @@ export default async function DashboardPage() {
       _count: { select: { properties: true } },
       properties: {
         include: {
-          leaseContracts: true,
+          leaseContracts: { include: { stepRents: true } },
           capexItems: true,
         },
       },
@@ -87,6 +87,12 @@ export default async function DashboardPage() {
         opexReimbursementIndexationRate: lc.opexReimbursementIndexationRate,
         opexFirstIndexationDate: lc.opexFirstIndexationDate,
         opexIndexationFrequency: lc.opexIndexationFrequency,
+        stepRents: lc.stepRents.map(s => ({
+          startDate: s.startDate,
+          endDate: s.endDate,
+          rentRate: s.rentRate,
+          indexAfterEnd: s.indexAfterEnd,
+        })),
         status: lc.status as 'ACTIVE' | 'EXPIRED' | 'TERMINATING',
       }))
 
@@ -172,6 +178,12 @@ export default async function DashboardPage() {
         opexReimbursementIndexationRate: lc.opexReimbursementIndexationRate,
         opexFirstIndexationDate: lc.opexFirstIndexationDate,
         opexIndexationFrequency: lc.opexIndexationFrequency,
+        stepRents: lc.stepRents.map(s => ({
+          startDate: s.startDate,
+          endDate: s.endDate,
+          rentRate: s.rentRate,
+          indexAfterEnd: s.indexAfterEnd,
+        })),
         status: lc.status as 'ACTIVE' | 'EXPIRED' | 'TERMINATING',
       }))
       const capexItems: CapexInput[] = property.capexItems.map(c => ({

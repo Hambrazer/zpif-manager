@@ -5,7 +5,7 @@ import type {
   MonthlyCashflow,
   TenantCashflow,
 } from '../types'
-import { calcIndexedRent } from './indexation'
+import { calcIndexedRent, calcStepRent } from './indexation'
 
 // Поля объекта, необходимые для расчёта денежного потока
 export type PropertyExpenseInput = {
@@ -90,8 +90,9 @@ export function calcPropertyCashflow(
     for (const lease of leases) {
       if (!isLeaseActiveInPeriod(lease, period)) continue
 
-      const indexedRent = calcIndexedRent(
+      const indexedRent = calcStepRent(
         lease.baseRent,
+        lease.stepRents ?? [],
         lease.startDate,
         periodEnd,
         lease.indexationType,

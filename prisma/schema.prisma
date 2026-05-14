@@ -132,6 +132,21 @@ model LeaseContract {
   updatedAt                       DateTime       @updatedAt
 
   property                        Property       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  stepRents                       LeaseStepRent[]
+}
+
+// ─── Ступени лестничной ставки ────────────────────────────────────────────────
+
+model LeaseStepRent {
+  id            String        @id @default(cuid())
+  leaseId       String
+  startDate     DateTime
+  endDate       DateTime
+  rentRate      Float          // ₽/м²/год на этом периоде
+  indexAfterEnd Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+
+  lease         LeaseContract  @relation(fields: [leaseId], references: [id], onDelete: Cascade)
 }
 
 // ─── Капитальные затраты ──────────────────────────────────────────────────────
