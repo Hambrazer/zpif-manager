@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { ScenarioTabs } from '@/components/ScenarioTabs'
 import { CashflowChart } from '@/components/charts/CashflowChart'
 import { CashflowTable } from '@/components/tables/CashflowTable'
 import { CashRollTable } from '@/components/tables/CashRollTable'
@@ -13,8 +12,6 @@ import type {
   MonthlyCashflow,
   MonthlyCashRoll,
   NAVResult,
-  ScenarioType,
-  ScenarioResults,
   ApiResponse,
 } from '@/lib/types'
 
@@ -26,8 +23,6 @@ type Props = {
   totalEmission: number
   totalUnits: number
   navData: NAVResult[] | null
-  activeScenario: ScenarioType
-  onScenarioChange: (s: ScenarioType) => void
 }
 
 type Metrics = {
@@ -42,6 +37,33 @@ type Metrics = {
 type CfTab = 'cashflow' | 'cashroll'
 
 // ─── Вычисления ───────────────────────────────────────────────────────────────
+
+function aggregatePropertyCashflows(
+  propertyCashflows: Record<string, MonthlyCashflow[]>,
+): MonthlyCashflow[] {
+  const values = Object.values(propertyCashflows)
+  if (values.length === 0) return []
+  const first = values[0]!
+  return first.map((baseCf, i) => {
+    const agg = { ...baseCf, tenants: [...baseCf.tenants] }
+    for (let j = 1; j < values.length; j++) {
+      const cf = values[j]![i]!
+      agg.gri += cf.gri
+      agg.vacancy += cf.vacancy
+      agg.nri += cf.nri
+      agg.opexReimbursementTotal += cf.opexReimbursementTotal
+      agg.opex += cf.opex
+      agg.propertyTax += cf.propertyTax
+      agg.landTax += cf.landTax
+      agg.maintenance += cf.maintenance
+      agg.capex += cf.capex
+      agg.noi += cf.noi
+      agg.fcf += cf.fcf
+      agg.tenants = [...agg.tenants, ...cf.tenants]
+    }
+    return agg
+  })
+}
 
 function computeMetrics(
   cashflows: MonthlyCashflow[],
@@ -64,7 +86,6 @@ function computeMetrics(
     if (!isNaN(monthlyIRR)) irr = Math.pow(1 + monthlyIRR, 12) - 1
   }
 
-  // СЧА и РСП — последнее значение из NAV-серии
   const lastNav = navData && navData.length > 0 ? navData[navData.length - 1] : null
   const nav = lastNav?.nav ?? null
   const rsp = lastNav?.rsp ?? null
@@ -79,14 +100,12 @@ function buildReturnPoints(
 ): ReturnPoint[] {
   if (totalEmission <= 0 || navData.length === 0) return []
 
-  // Годовые распределения из cashRoll
   const distByYear = new Map<number, number>()
   for (const row of cashRoll) {
     const y = row.period.year
     distByYear.set(y, (distByYear.get(y) ?? 0) + row.distributionOutflow)
   }
 
-  // Годовые NAV: последнее значение в году
   const navByYear = new Map<number, number>()
   for (const n of navData) {
     navByYear.set(n.period.year, n.nav)
@@ -128,11 +147,9 @@ export function FundCashflowBlock({
   fundId,
   totalAcquisitionPrice,
   totalEmission,
-  activeScenario,
-  onScenarioChange,
   navData,
 }: Props) {
-  const [scenarioData, setScenarioData] = useState<ScenarioResults | null>(null)
+  const [cashflows, setCashflows] = useState<MonthlyCashflow[]>([])
   const [cashRoll, setCashRoll] = useState<MonthlyCashRoll[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -142,25 +159,18 @@ export function FundCashflowBlock({
     setLoading(true)
     setError(null)
 
-    Promise.all([
-      fetch(`/api/cashflow/fund/${fundId}/scenarios`)
-        .then(r => r.json() as Promise<ApiResponse<ScenarioResults>>),
-      fetch(`/api/cashflow/fund/${fundId}`)
-        .then(r => r.json() as Promise<ApiResponse<{ cashRoll: MonthlyCashRoll[] }>>),
-    ])
-      .then(([scenariosJson, cashRollJson]) => {
-        if (scenariosJson.error) throw new Error(scenariosJson.error)
-        if (cashRollJson.error) throw new Error(cashRollJson.error)
-        setScenarioData(scenariosJson.data)
-        setCashRoll(cashRollJson.data.cashRoll)
+    fetch(`/api/cashflow/fund/${fundId}`)
+      .then(r => r.json() as Promise<ApiResponse<{ cashRoll: MonthlyCashRoll[]; propertyCashflows: Record<string, MonthlyCashflow[]> }>>)
+      .then(json => {
+        if (json.error) throw new Error(json.error)
+        setCashRoll(json.data.cashRoll)
+        setCashflows(aggregatePropertyCashflows(json.data.propertyCashflows))
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : 'Ошибка загрузки данных')
       })
       .finally(() => setLoading(false))
   }, [fundId])
-
-  // ── Состояния загрузки / ошибки ──
 
   if (loading) {
     return (
@@ -178,25 +188,6 @@ export function FundCashflowBlock({
     )
   }
 
-  if (!scenarioData) return null
-
-  const available = (['BASE', 'BULL', 'BEAR'] as const).filter(
-    s => scenarioData[s] !== undefined,
-  )
-
-  if (available.length === 0) {
-    return (
-      <div className="rounded-md bg-amber-50 border border-amber-100 px-4 py-3 text-sm text-amber-700">
-        Нет данных. Добавьте сценарии (BASE / BULL / BEAR) к объектам фонда.
-      </div>
-    )
-  }
-
-  const firstAvailable = available[0] ?? 'BASE'
-  const effectiveScenario: ScenarioType =
-    scenarioData[activeScenario] !== undefined ? activeScenario : firstAvailable
-  const cashflows = scenarioData[effectiveScenario] ?? []
-
   const metrics = computeMetrics(cashflows, totalAcquisitionPrice, navData)
   const returnPoints = navData && cashRoll
     ? buildReturnPoints(navData, cashRoll, totalEmission)
@@ -204,16 +195,6 @@ export function FundCashflowBlock({
 
   return (
     <div className="space-y-6">
-
-      {/* ── Переключатель сценариев ── */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <ScenarioTabs
-          available={available}
-          active={effectiveScenario}
-          onChange={onScenarioChange}
-        />
-        <span className="text-xs text-gray-400">{cashflows.length} мес. прогноза</span>
-      </div>
 
       {/* ── Метрики ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">

@@ -15,7 +15,6 @@ import type { MonthlyCashflow, MonthlyPeriod, LeaseInput, DebtInput } from '../.
 function makeCF(
   year: number, month: number,
   noi: number, fcf: number,
-  debtService = 0,
 ): MonthlyCashflow {
   const opex = noi < 0 ? -noi : 0
   return {
@@ -23,7 +22,7 @@ function makeCF(
     gri: noi + opex, vacancy: 0, nri: noi + opex,
     opexReimbursementTotal: 0,
     opex, propertyTax: 0, landTax: 0, maintenance: 0,
-    capex: 0, noi, debtService, fcf,
+    capex: 0, noi, fcf,
     tenants: [],
   }
 }
@@ -66,34 +65,28 @@ describe('calcFundCashflow', () => {
     expect(result[0]!.fcf).toBe(0)
   })
 
-  it('один объект, нет расходов фонда → NOI и debtService агрегируются', () => {
-    // prop: NOI=10 000, debtService=2 000, FCF=8 000
-    const propCF: MonthlyCashflow[] = [
-      { ...makeCF(2024, 1, 10_000, 8_000), debtService: 2_000 },
-    ]
+  it('один объект, нет расходов фонда → NOI агрегируется, fcf = noi − capex', () => {
+    const propCF: MonthlyCashflow[] = [makeCF(2024, 1, 10_000, 10_000)]
     const result = calcFundCashflow([propCF], 0, [], [jan2024])
     expect(result[0]!.noi).toBeCloseTo(10_000, 2)
-    expect(result[0]!.debtService).toBeCloseTo(2_000, 2)
-    expect(result[0]!.fcf).toBeCloseTo(8_000, 2)
+    expect(result[0]!.fcf).toBeCloseTo(10_000, 2)
   })
 
-  it('два объекта — NOI и debtService суммируются', () => {
-    const prop1: MonthlyCashflow[] = [{ ...makeCF(2024, 1, 10_000, 8_000), debtService: 2_000 }]
-    const prop2: MonthlyCashflow[] = [{ ...makeCF(2024, 1, 6_000, 5_000), debtService: 1_000 }]
+  it('два объекта — NOI суммируется', () => {
+    const prop1: MonthlyCashflow[] = [makeCF(2024, 1, 10_000, 10_000)]
+    const prop2: MonthlyCashflow[] = [makeCF(2024, 1, 6_000, 6_000)]
     const result = calcFundCashflow([prop1, prop2], 0, [], [jan2024])
     expect(result[0]!.noi).toBeCloseTo(16_000, 2)
-    expect(result[0]!.debtService).toBeCloseTo(3_000, 2)
-    expect(result[0]!.fcf).toBeCloseTo(13_000, 2)
+    expect(result[0]!.fcf).toBeCloseTo(16_000, 2)
   })
 
-  it('расходы фонда 12 000 ₽/год → 1 000 ₽/мес добавляется в debtService', () => {
+  it('расходы фонда 12 000 ₽/год → 1 000 ₽/мес уменьшает fcf', () => {
     const propCF: MonthlyCashflow[] = [makeCF(2024, 1, 10_000, 10_000)]
     const result = calcFundCashflow([propCF], 12_000, [], [jan2024])
-    expect(result[0]!.debtService).toBeCloseTo(1_000, 2)
     expect(result[0]!.fcf).toBeCloseTo(9_000, 2)
   })
 
-  it('долг фонда (BULLET) добавляет проценты в debtService', () => {
+  it('долг фонда (BULLET) → проценты уменьшают fcf', () => {
     const fundDebt: DebtInput = {
       id: 'd1',
       principalAmount: 1_200_000,
@@ -104,8 +97,7 @@ describe('calcFundCashflow', () => {
     }
     const propCF: MonthlyCashflow[] = [makeCF(2024, 1, 20_000, 20_000)]
     const result = calcFundCashflow([propCF], 0, [fundDebt], [jan2024])
-    // BULLET: проценты = 1 200 000 × 0.12 / 12 = 12 000
-    expect(result[0]!.debtService).toBeCloseTo(12_000, 0)
+    // BULLET: проценты = 1 200 000 × 0.12 / 12 = 12 000 → fcf = 20 000 − 12 000
     expect(result[0]!.fcf).toBeCloseTo(8_000, 0)
   })
 
@@ -124,12 +116,12 @@ describe('calcFundCashflow', () => {
     const cf1: MonthlyCashflow = {
       period: jan2024, gri: 100, vacancy: 10, nri: 90,
       opexReimbursementTotal: 0, opex: 20, propertyTax: 0, landTax: 0, maintenance: 0,
-      capex: 5, noi: 65, debtService: 0, fcf: 65, tenants: [],
+      capex: 5, noi: 65, fcf: 65, tenants: [],
     }
     const cf2: MonthlyCashflow = {
       period: jan2024, gri: 200, vacancy: 0, nri: 200,
       opexReimbursementTotal: 0, opex: 30, propertyTax: 0, landTax: 0, maintenance: 0,
-      capex: 0, noi: 170, debtService: 0, fcf: 170, tenants: [],
+      capex: 0, noi: 170, fcf: 170, tenants: [],
     }
     const result = calcFundCashflow([[cf1], [cf2]], 0, [], [jan2024])
     expect(result[0]!.gri).toBeCloseTo(300, 2)

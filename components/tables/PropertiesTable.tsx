@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatRub, formatPct } from '@/lib/utils/format'
-import type { ScenarioType, ApiResponse } from '@/lib/types'
+import type { ApiResponse } from '@/lib/types'
 import type { PropertyMetrics } from '@/app/api/cashflow/fund/[id]/properties/route'
 
 type PropertyType = 'OFFICE' | 'WAREHOUSE' | 'RETAIL' | 'MIXED' | 'RESIDENTIAL'
@@ -29,7 +29,6 @@ export type PropertySummary = {
 type Props = {
   fundId: string
   properties: PropertySummary[]
-  scenario: ScenarioType
 }
 
 // Skeleton cell shown while metrics are loading
@@ -41,7 +40,7 @@ function SkeletonCell({ width }: { width: string }) {
   )
 }
 
-export function PropertiesTable({ fundId, properties, scenario }: Props) {
+export function PropertiesTable({ fundId, properties }: Props) {
   const router = useRouter()
   const [metricsMap, setMetricsMap] = useState<Map<string, PropertyMetrics> | null>(null)
   const [loading, setLoading] = useState(true)
@@ -51,7 +50,7 @@ export function PropertiesTable({ fundId, properties, scenario }: Props) {
     setLoading(true)
     setError(null)
 
-    fetch(`/api/cashflow/fund/${fundId}/properties?scenario=${scenario}`)
+    fetch(`/api/cashflow/fund/${fundId}/properties`)
       .then((r) => r.json() as Promise<ApiResponse<PropertyMetrics[]>>)
       .then((json) => {
         if (json.error) throw new Error(json.error)
@@ -61,7 +60,7 @@ export function PropertiesTable({ fundId, properties, scenario }: Props) {
         setError(err instanceof Error ? err.message : 'Ошибка загрузки метрик')
       })
       .finally(() => setLoading(false))
-  }, [fundId, scenario])
+  }, [fundId])
 
   const totalGLA = properties.reduce((s, p) => s + p.rentableArea, 0)
 

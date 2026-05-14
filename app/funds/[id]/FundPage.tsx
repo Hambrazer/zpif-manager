@@ -8,7 +8,7 @@ import { FundCashflowBlock } from './FundCashflowBlock'
 import { PropertiesTable } from '@/components/tables/PropertiesTable'
 import { NavChart } from '@/components/charts/NavChart'
 import { formatRub, formatPct, formatDate } from '@/lib/utils/format'
-import type { NAVResult, ScenarioType, ApiResponse } from '@/lib/types'
+import type { NAVResult, ApiResponse } from '@/lib/types'
 
 // ─── Типы ─────────────────────────────────────────────────────────────────────
 
@@ -51,7 +51,6 @@ const PERIODICITY_LABELS: Record<FundData['distributionPeriodicity'], string> = 
 
 export function FundPage({ fund }: Props) {
   const router = useRouter()
-  const [activeScenario, setActiveScenario] = useState<ScenarioType>('BASE')
   const [showAddProperty, setShowAddProperty] = useState(false)
   const [navData, setNavData] = useState<NAVResult[] | null>(null)
 
@@ -147,8 +146,6 @@ export function FundPage({ fund }: Props) {
             totalEmission={fund.totalEmission}
             totalUnits={fund.totalUnits}
             navData={navData}
-            activeScenario={activeScenario}
-            onScenarioChange={setActiveScenario}
           />
         </section>
 
@@ -178,7 +175,6 @@ export function FundPage({ fund }: Props) {
             <PropertiesTable
               fundId={fund.id}
               properties={fund.properties}
-              scenario={activeScenario}
             />
           )}
         </section>

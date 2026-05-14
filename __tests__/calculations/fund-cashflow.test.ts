@@ -18,7 +18,7 @@ function makeCF(year: number, month: number, noi: number): MonthlyCashflow {
     gri: 0, vacancy: 0, nri: 0,
     opexReimbursementTotal: 0,
     opex: 0, propertyTax: 0, landTax: 0, maintenance: 0,
-    capex: 0, noi, debtService: 0, fcf: noi,
+    capex: 0, noi, fcf: noi,
     tenants: [],
   }
 }
