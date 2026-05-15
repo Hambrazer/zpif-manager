@@ -8,13 +8,17 @@ import type {
 } from '../types'
 import { calcDebtSchedule } from './amortization'
 
-/** Метаданные объекта + его помесячный денежный поток для расчёта кэш-ролла фонда */
+/** Метаданные объекта + его помесячный денежный поток для расчёта кэш-ролла фонда.
+ *  V3.8.5: ownershipPct — доля владения фонда в объекте (0; 100]. Все денежные
+ *  потоки от объекта (NOI, покупка, продажа, оценка стоимости) масштабируются на
+ *  ownershipPct/100. Если поле не задано — считается 100% (обратная совместимость). */
 export type PropertyCFInput = {
   acquisitionPrice: number | null
   purchaseDate: Date | null
   saleDate: Date | null
   exitCapRate: number | null
   cashflows: MonthlyCashflow[]
+  ownershipPct?: number
 }
 
 function periodKey(p: MonthlyPeriod): string {
@@ -120,6 +124,12 @@ function isPropertyActiveInPeriod(prop: PropertyCFInput, period: MonthlyPeriod):
   return true
 }
 
+/** Доля владения фонда в объекте, в долях (0; 1]. По умолчанию 100% (=1). */
+function ownershipShare(prop: PropertyCFInput): number {
+  const pct = prop.ownershipPct ?? 100
+  return pct / 100
+}
+
 /** NOI следующих 12 месяцев после указанного периода */
 function calcNextYearNOI(cashflows: MonthlyCashflow[], period: MonthlyPeriod): number {
   const idx = cashflows.findIndex(
@@ -129,20 +139,20 @@ function calcNextYearNOI(cashflows: MonthlyCashflow[], period: MonthlyPeriod): n
   return cashflows.slice(idx + 1, idx + 13).reduce((s, cf) => s + cf.noi, 0)
 }
 
-/** Стоимость объекта = NOI_12мес / exitCapRate */
+/** Стоимость объекта = NOI_12мес / exitCapRate × доля владения */
 function getPropertyValue(prop: PropertyCFInput, period: MonthlyPeriod): number {
   if (!prop.exitCapRate || prop.exitCapRate === 0) return 0
-  return calcNextYearNOI(prop.cashflows, period) / prop.exitCapRate
+  return (calcNextYearNOI(prop.cashflows, period) / prop.exitCapRate) * ownershipShare(prop)
 }
 
-/** Выручка от продажи = NOI_12мес_после_saleDate / exitCapRate */
+/** Выручка от продажи = NOI_12мес_после_saleDate / exitCapRate × доля владения */
 function getSaleProceeds(prop: PropertyCFInput): number {
   if (!prop.saleDate || !prop.exitCapRate || prop.exitCapRate === 0) return 0
   const salePeriod: MonthlyPeriod = {
     year: prop.saleDate.getFullYear(),
     month: prop.saleDate.getMonth() + 1,
   }
-  return calcNextYearNOI(prop.cashflows, salePeriod) / prop.exitCapRate
+  return (calcNextYearNOI(prop.cashflows, salePeriod) / prop.exitCapRate) * ownershipShare(prop)
 }
 
 function buildDebtServiceMap(fundDebts: DebtInput[]): Map<string, number> {
@@ -228,7 +238,7 @@ export function calcFundCashRoll(
     for (const prop of propertyCashflows) {
       if (!isPropertyActiveInPeriod(prop, period)) continue
       const cf = prop.cashflows.find(c => c.period.year === period.year && c.period.month === period.month)
-      noiInflow += cf?.noi ?? 0
+      noiInflow += (cf?.noi ?? 0) * ownershipShare(prop)
     }
 
     let disposalInflow = 0
@@ -244,7 +254,7 @@ export function calcFundCashRoll(
     let acquisitionOutflow = 0
     for (const prop of propertyCashflows) {
       if (prop.purchaseDate && isSamePeriod(prop.purchaseDate, period)) {
-        acquisitionOutflow += prop.acquisitionPrice ?? 0
+        acquisitionOutflow += (prop.acquisitionPrice ?? 0) * ownershipShare(prop)
       }
     }
 

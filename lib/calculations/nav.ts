@@ -13,10 +13,13 @@ function periodKey(p: MonthlyPeriod): string {
 
 // ─── Вспомогательные типы ─────────────────────────────────────────────────────
 
-/** Минимальный набор данных объекта для расчёта стоимости в СЧА */
+/** Минимальный набор данных объекта для расчёта стоимости в СЧА.
+ *  V3.8.5: ownershipPct — доля владения фонда в объекте (0; 100]. Если не задана,
+ *  считается 100% (обратная совместимость). */
 export type PropertyValueInput = {
   exitCapRate: number | null
   cashflows: MonthlyCashflow[]
+  ownershipPct?: number
 }
 
 // ─── Стоимость объекта ────────────────────────────────────────────────────────
@@ -154,7 +157,9 @@ export function calcNAVTimeSeries(
     let propertyValue = 0
     for (const prop of properties) {
       const nextYearNOI = calcNextYearNOI(prop.cashflows, period)
-      propertyValue += calcPropertyValue(prop, nextYearNOI)
+      // V3.8.5: стоимость объекта в СЧА масштабируется на долю владения фонда.
+      const share = (prop.ownershipPct ?? 100) / 100
+      propertyValue += calcPropertyValue(prop, nextYearNOI) * share
     }
 
     const totalAssets = cash + propertyValue

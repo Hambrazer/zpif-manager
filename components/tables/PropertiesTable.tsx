@@ -45,6 +45,27 @@ export function PropertiesTable({ fundId, properties }: Props) {
   const [metricsMap, setMetricsMap] = useState<Map<string, PropertyMetrics> | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [removingId, setRemovingId] = useState<string | null>(null)
+
+  async function handleRemove(propertyId: string, name: string) {
+    if (!confirm(`Отвязать «${name}» от фонда?\n\nЕсли у объекта не останется других фондов, его статус вернётся на «Одобрен» и он попадёт обратно в pipeline.`)) {
+      return
+    }
+    setRemovingId(propertyId)
+    try {
+      const res = await fetch(`/api/funds/${fundId}/properties/${propertyId}`, { method: 'DELETE' })
+      const json = await res.json() as { error?: string }
+      if (!res.ok) {
+        alert(json.error ?? 'Ошибка отвязки')
+        return
+      }
+      router.refresh()
+    } catch {
+      alert('Ошибка сети')
+    } finally {
+      setRemovingId(null)
+    }
+  }
 
   useEffect(() => {
     setLoading(true)
@@ -93,6 +114,7 @@ export function PropertiesTable({ fundId, properties }: Props) {
             <th className="text-right px-4 py-3">NOI/год</th>
             <th className="text-right px-4 py-3">Cap Rate</th>
             <th className="text-right px-4 py-3">Cap Rate выхода</th>
+            <th className="px-4 py-3" />
           </tr>
         </thead>
         <tbody>
@@ -171,6 +193,21 @@ export function PropertiesTable({ fundId, properties }: Props) {
                     <span className="text-gray-300">—</span>
                   )}
                 </td>
+
+                {/* Отвязать от фонда (V3.8.4) */}
+                <td
+                  className="px-4 py-3 text-right"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    onClick={() => handleRemove(prop.id, prop.name)}
+                    disabled={removingId === prop.id}
+                    className="text-xs text-gray-400 hover:text-red-600 disabled:opacity-50"
+                    title="Отвязать объект от фонда"
+                  >
+                    {removingId === prop.id ? '…' : 'Отвязать'}
+                  </button>
+                </td>
               </tr>
             )
           })}
@@ -199,6 +236,7 @@ export function PropertiesTable({ fundId, properties }: Props) {
             </td>
             <td className="px-4 py-3 text-right text-gray-300">—</td>
             <td className="px-4 py-3 text-right text-gray-300">—</td>
+            <td className="px-4 py-3" />
           </tr>
         </tfoot>
       </table>

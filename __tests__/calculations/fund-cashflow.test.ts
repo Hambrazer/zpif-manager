@@ -378,4 +378,62 @@ describe('calcFundCashRoll', () => {
       expect(result[i]!.cashBegin).toBeCloseTo(result[i - 1]!.cashEnd, 2)
     }
   })
+
+  // ─── V3.8.5: масштабирование на ownershipPct ────────────────────────────────
+  it('ownershipPct=50: NOI, покупка, продажа масштабируются на 0.5', () => {
+    // Fund Jan–Mar 2024, объект куплен в Feb за 5M, продан в Mar.
+    // NOI=100k/мес, exitCapRate=10%, ownershipPct=50%.
+    // Ожидается: NOI(Feb)=50k, NOI(Mar)=50k, acquisition(Feb)=2.5M,
+    //            disposal(Mar) = (NOI_12мес_после_Mar × 0.5) / 0.1
+    //              = (12 × 100k × 0.5) / 0.1 = 600k / 0.1 = 6M
+    const fund = makeMinimalFund()
+    const cashflows = Array.from({ length: 18 }, (_, i) => makeCF(2024, i + 1, 100_000))
+    const prop = makePropCF({
+      cashflows,
+      purchaseDate: new Date(2024, 1, 1),
+      saleDate: new Date(2024, 2, 1),
+      acquisitionPrice: 5_000_000,
+      exitCapRate: 0.10,
+      ownershipPct: 50,
+    })
+
+    const result = calcFundCashRoll(fund, [prop], [])
+
+    expect(result[0]!.noiInflow).toBe(0)                            // Jan — до покупки
+    expect(result[1]!.noiInflow).toBeCloseTo(50_000, 0)              // Feb — 100k × 0.5
+    expect(result[1]!.acquisitionOutflow).toBeCloseTo(2_500_000, 0)  // Feb — 5M × 0.5
+    expect(result[2]!.noiInflow).toBeCloseTo(50_000, 0)              // Mar — 100k × 0.5
+    expect(result[2]!.disposalInflow).toBeCloseTo(6_000_000, 0)      // Mar — 12M × 0.5
+  })
+
+  it('ownershipPct по умолчанию 100% — поведение не меняется', () => {
+    // Без явного ownershipPct результат должен совпадать с явным 100%.
+    const fund = makeMinimalFund()
+    const cashflows = Array.from({ length: 16 }, (_, i) => makeCF(2024, i + 1, 100_000))
+    const propA = makePropCF({ cashflows, exitCapRate: 0.10 })
+    const propB = makePropCF({ cashflows, exitCapRate: 0.10, ownershipPct: 100 })
+
+    const rA = calcFundCashRoll(fund, [propA], [])
+    const rB = calcFundCashRoll(fund, [propB], [])
+
+    for (let i = 0; i < rA.length; i++) {
+      expect(rB[i]!.noiInflow).toBeCloseTo(rA[i]!.noiInflow, 2)
+      expect(rB[i]!.cashEnd).toBeCloseTo(rA[i]!.cashEnd, 2)
+    }
+  })
+
+  it('два объекта с разными долями: вклады складываются', () => {
+    // Объект A: NOI=100k/мес, ownership=100% → вклад 100k
+    // Объект B: NOI=200k/мес, ownership=25%  → вклад 50k
+    // Суммарный NOI фонда = 150k/мес
+    const fund = makeMinimalFund()
+    const cashflowsA = Array.from({ length: 16 }, (_, i) => makeCF(2024, i + 1, 100_000))
+    const cashflowsB = Array.from({ length: 16 }, (_, i) => makeCF(2024, i + 1, 200_000))
+    const propA = makePropCF({ cashflows: cashflowsA })
+    const propB = makePropCF({ cashflows: cashflowsB, ownershipPct: 25 })
+
+    const result = calcFundCashRoll(fund, [propA, propB], [])
+
+    expect(result[0]!.noiInflow).toBeCloseTo(150_000, 0)
+  })
 })

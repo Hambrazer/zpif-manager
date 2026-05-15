@@ -1242,11 +1242,143 @@ function DcfMetric({
 
 // ─── Вкладка «Основное» ──────────────────────────────────────────────────────
 
+const PIPELINE_STATUS_LABELS: Record<PipelineStatus, string> = {
+  SCREENING:     'Скрининг',
+  DUE_DILIGENCE: 'Due Diligence',
+  APPROVED:      'Одобрен',
+  IN_FUND:       'В фонде',
+  REJECTED:      'Отклонён',
+  SOLD:          'Продан',
+}
+
+const PIPELINE_STATUS_BADGE_CLS: Record<PipelineStatus, string> = {
+  SCREENING:     'bg-gray-100 text-gray-700',
+  DUE_DILIGENCE: 'bg-yellow-100 text-yellow-800',
+  APPROVED:      'bg-blue-100 text-blue-800',
+  IN_FUND:       'bg-green-100 text-green-800',
+  REJECTED:      'bg-red-100 text-red-700',
+  SOLD:          'bg-gray-300 text-gray-800',
+}
+
+// V3.8.3: какие значения доступны в select из текущего состояния.
+// IN_FUND всегда disabled — проставляется автоматически при привязке к фонду.
+// SOLD доступен только из IN_FUND. Из SOLD выходить вручную нельзя.
+function pipelineOptionsFor(current: PipelineStatus): { value: PipelineStatus; disabled: boolean }[] {
+  const all: PipelineStatus[] = ['SCREENING', 'DUE_DILIGENCE', 'APPROVED', 'IN_FUND', 'REJECTED', 'SOLD']
+  return all.map(value => {
+    if (value === current) return { value, disabled: false }
+    if (value === 'IN_FUND') return { value, disabled: true }
+    if (current === 'SOLD') return { value, disabled: true }
+    if (current === 'IN_FUND') return { value, disabled: value !== 'SOLD' }
+    // current ∈ {SCREENING, DUE_DILIGENCE, APPROVED, REJECTED}
+    return { value, disabled: value === 'SOLD' }
+  })
+}
+
+function StatusSection({ property }: { property: PropertyData }) {
+  const router = useRouter()
+  const [status, setStatus] = useState<PipelineStatus>(property.pipelineStatus)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Если родительский props обновился (после router.refresh) — синхронизируем локальный state.
+  useEffect(() => { setStatus(property.pipelineStatus) }, [property.pipelineStatus])
+
+  const options = pipelineOptionsFor(property.pipelineStatus)
+
+  async function handleChange(next: PipelineStatus) {
+    if (next === property.pipelineStatus) return
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/properties/${property.id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: next }),
+      })
+      const json = await res.json() as { data?: unknown; error?: string }
+      if (!res.ok) {
+        setError(json.error ?? 'Ошибка обновления статуса')
+        setStatus(property.pipelineStatus)
+        return
+      }
+      setStatus(next)
+      router.refresh()
+    } catch {
+      setError('Ошибка сети')
+      setStatus(property.pipelineStatus)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-gray-900">Статус</p>
+        <span
+          className={
+            'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ' +
+            PIPELINE_STATUS_BADGE_CLS[status]
+          }
+        >
+          {PIPELINE_STATUS_LABELS[status]}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <select
+          value={status}
+          onChange={e => handleChange(e.target.value as PipelineStatus)}
+          disabled={saving}
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50"
+        >
+          {options.map(opt => (
+            <option key={opt.value} value={opt.value} disabled={opt.disabled}>
+              {PIPELINE_STATUS_LABELS[opt.value]}
+            </option>
+          ))}
+        </select>
+        {saving && <span className="text-xs text-gray-400">Сохранение…</span>}
+      </div>
+
+      <div className="text-xs text-gray-500 leading-relaxed">
+        {property.pipelineStatus === 'IN_FUND' ? (
+          <>
+            Статус «В фонде» проставлен автоматически. Чтобы вернуть в pipeline —
+            отвяжите объект от фонда. Доступен переход «Продан».
+          </>
+        ) : property.pipelineStatus === 'SOLD' ? (
+          <>Объект продан. Статус терминальный.</>
+        ) : (
+          <>
+            «В фонде» проставляется автоматически при привязке к фонду. «Продан» доступен
+            только когда объект уже находится в фонде.
+          </>
+        )}
+      </div>
+
+      {property.funds.length > 0 && (
+        <div className="pt-2 border-t border-gray-100 text-xs text-gray-500">
+          Привязан к {property.funds.length === 1 ? 'фонду' : 'фондам'}:{' '}
+          <span className="text-gray-700">
+            {property.funds.map(f => `${f.fundName} (${f.ownershipPct}%)`).join(', ')}
+          </span>
+        </div>
+      )}
+
+      {error && <p className="text-sm text-red-600">{error}</p>}
+    </div>
+  )
+}
+
 function MainTab({ property }: { property: PropertyData }) {
   const router = useRouter()
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
+    <div className="space-y-4">
+      <StatusSection property={property} />
+      <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-gray-900">Параметры объекта</p>
         <p className="text-xs text-gray-400">
@@ -1279,6 +1411,7 @@ function MainTab({ property }: { property: PropertyData }) {
         }}
         onSuccess={() => router.refresh()}
       />
+      </div>
     </div>
   )
 }

@@ -8,7 +8,9 @@ import { useState } from 'react'
 // с дефолтными значениями и редактируются позже в Основном.
 
 type Props = {
-  fundId: string
+  // Опционально: если передан — объект сразу привязывается к фонду (статус IN_FUND).
+  // Если не передан — объект создаётся в pipeline со статусом SCREENING.
+  fundId?: string
   onSuccess: (propertyId: string) => void
   onCancel?: () => void
 }
@@ -67,7 +69,7 @@ export function PropertyCreateForm({ fundId, onSuccess, onCancel }: Props) {
     }
 
     const body = {
-      fundId,
+      ...(fundId ? { fundId } : {}),
       name:    form.name.trim(),
       address: form.address.trim(),
       type:    DEFAULTS.type,

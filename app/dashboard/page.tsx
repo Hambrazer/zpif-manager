@@ -204,6 +204,7 @@ export default async function DashboardPage() {
         saleDate: property.saleDate,
         exitCapRate: property.exitCapRate,
         cashflows: calcPropertyCashflow(propertyInput, leases, capexItems, fundPeriods),
+        ownershipPct: fp.ownershipPct,
       }
     })
 

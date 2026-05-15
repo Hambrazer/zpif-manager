@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { PropertyCreateForm } from '@/components/forms/PropertyCreateForm'
+import { AddPropertyToFundModal } from '@/components/modals/AddPropertyToFundModal'
 import { FundCashflowBlock } from './FundCashflowBlock'
 import { FundChartsBlock } from './FundChartsBlock'
 import { PropertiesTable } from '@/components/tables/PropertiesTable'
@@ -277,7 +277,7 @@ export function FundPage({ fund }: Props) {
               onClick={() => setShowAddProperty(true)}
               className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
             >
-              + Добавить объект
+              + Добавить объект из pipeline
             </button>
           </div>
 
@@ -295,26 +295,16 @@ export function FundPage({ fund }: Props) {
         </section>
       </main>
 
-      {/* ── Модальное окно добавления объекта ── */}
+      {/* ── Модальное окно «Добавить объект из pipeline» (V3.8.4) ── */}
       {showAddProperty && (
-        <div
-          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-          onClick={e => {
-            if (e.target === e.currentTarget) setShowAddProperty(false)
+        <AddPropertyToFundModal
+          fundId={fund.id}
+          onClose={() => setShowAddProperty(false)}
+          onSuccess={() => {
+            setShowAddProperty(false)
+            router.refresh()
           }}
-        >
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Добавить объект</h2>
-            <PropertyCreateForm
-              fundId={fund.id}
-              onSuccess={(propertyId: string) => {
-                setShowAddProperty(false)
-                router.push(`/properties/${propertyId}`)
-              }}
-              onCancel={() => setShowAddProperty(false)}
-            />
-          </div>
-        </div>
+        />
       )}
     </div>
   )

@@ -107,11 +107,13 @@ export async function GET(_req: Request, { params }: Params) {
         saleDate: property.saleDate,
         exitCapRate: property.exitCapRate,
         cashflows,
+        ownershipPct: fp.ownershipPct,
       })
 
       propertyValueInputs.push({
         exitCapRate: property.exitCapRate,
         cashflows,
+        ownershipPct: fp.ownershipPct,
       })
     }
 
