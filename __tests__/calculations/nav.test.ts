@@ -32,6 +32,7 @@ function makeCashRoll(year: number, month: number, cashEnd: number): MonthlyCash
     managementFeeOutflow: 0, fundExpensesOutflow: 0,
     successFeeOperationalOutflow: 0, successFeeExitOutflow: 0,
     debtServiceOutflow: 0, distributionOutflow: 0,
+    redemptionOutflow: 0,
     cashEnd,
   }
 }
@@ -249,6 +250,29 @@ describe('calcNAVTimeSeries', () => {
     const result = calcNAVTimeSeries(cashRoll, properties, [], 1000)
     expect(result[0]!.propertyValue).toBe(0)
     expect(result[0]!.nav).toBeCloseTo(500_000, 0)
+  })
+
+  // ─── V4.2.4: стоимость объекта в last месяц фонда из собств. CF ───────────────
+  it('стоимость объекта в last месяц фонда считается по 12 forward месяцам собственного CF (за пределами фонда)', () => {
+    // Сценарий: фонд закрывается в Dec 2024 (последний месяц).
+    // CF объекта тянется до Dec 2026 (24 месяца), NOI=100k/мес, exitCapRate=10%.
+    // Стоимость на Dec 2024 = NOI(Jan2025..Dec2025) / 0.10 = 1.2M / 0.10 = 12M.
+    // Эти 12 месяцев — за пределами endDate фонда (Dec 2024), но в пределах CF объекта.
+    const cashflows = Array.from({ length: 24 }, (_, i) => {
+      const totalMonth = i
+      return makeCF(
+        2024 + Math.floor(totalMonth / 12),
+        (totalMonth % 12) + 1,
+        100_000,
+      )
+    })
+    const cashRoll = [makeCashRoll(2024, 12, 0)]   // last месяц фонда
+    const properties = [{ exitCapRate: 0.10, cashflows }]
+
+    const result = calcNAVTimeSeries(cashRoll, properties, [], 1000)
+
+    expect(result[0]!.period).toEqual({ year: 2024, month: 12 })
+    expect(result[0]!.propertyValue).toBeCloseTo(12_000_000, 0)
   })
 
   it('два объекта — стоимости суммируются', () => {

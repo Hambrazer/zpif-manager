@@ -434,3 +434,38 @@ describe('несколько периодов', () => {
     expect(result[1]!.totalIncome).toBeCloseTo(result[2]!.totalIncome, 2)
   })
 })
+
+// ─── V4.2.4: горизонт CF не зависит от фонда (projectionYears) ────────────────
+
+describe('горизонт CF на projectionYears (V4.2.1)', () => {
+  // Объект с projectionYears=10 (120 месяцев), аренда живёт 2024-01..2026-12 (36 мес).
+  // Имитируем: фонд закрывается на 60-м месяце (Dec 2028) — в прежней реализации
+  // CF объекта урезался до 60 строк. Теперь функция должна вернуть все 120 строк
+  // и продолжать считать NOI в каждом из них (после окончания договоров — по сути 0).
+  const periods120: MonthlyPeriod[] = Array.from({ length: 120 }, (_, i) => ({
+    year: 2024 + Math.floor(i / 12),
+    month: (i % 12) + 1,
+  }))
+
+  it('возвращает 120 строк (projectionYears=10), не урезается на горизонте фонда', () => {
+    const result = calcPropertyCashflow(baseProperty, [baseLease], [], periods120)
+    expect(result).toHaveLength(120)
+  })
+
+  it('NOI в месяце на 60-м (Dec 2028, после endDate условного фонда) считается, не «обнуляется»', () => {
+    // Аренда закончилась после месяца 36 (Dec 2026). На 60-м месяце аренды нет,
+    // но функция корректно отдаёт строку с rentIncome=0 — а не отсутствие строки.
+    const result = calcPropertyCashflow(baseProperty, [baseLease], [], periods120)
+    const dec2028 = result[59]!
+    expect(dec2028.period).toEqual({ year: 2028, month: 12 })
+    expect(dec2028.totalIncome).toBe(0)        // аренда уже закончилась
+    expect(dec2028.noi).toBe(0)                // расходов у baseProperty тоже нет
+  })
+
+  it('NOI в месяцах активной аренды положителен на полном горизонте 120 месяцев', () => {
+    const result = calcPropertyCashflow(baseProperty, [baseLease], [], periods120)
+    // Месяц 1 (Jan 2024) и месяц 36 (Dec 2026) — оба внутри срока аренды
+    expect(result[0]!.totalIncome).toBeGreaterThan(0)
+    expect(result[35]!.totalIncome).toBeGreaterThan(0)
+  })
+})

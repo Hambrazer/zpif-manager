@@ -292,12 +292,17 @@ export function calcFundCashRoll(
     }
 
     // ─── Итог ────────────────────────────────────────────────────────────────
-    const cashEnd = cashBegin
+    const cashEndBeforeRedemption = cashBegin
       + emissionInflow + noiInflow + disposalInflow
       - acquisitionOutflow - upfrontFeeOutflow
       - managementFeeOutflow - fundExpensesOutflow
       - debtServiceOutflow - distributionOutflow
       - successFeeOperationalOutflow - successFeeExitOutflow
+
+    // V4.2.3: в последнем месяце фонда весь остаток кэша уходит пайщикам как
+    // погашение паёв (redemptionOutflow), и cashEnd обнуляется.
+    const redemptionOutflow = isEndPeriod ? Math.max(0, cashEndBeforeRedemption) : 0
+    const cashEnd = cashEndBeforeRedemption - redemptionOutflow
 
     result.push({
       period,
@@ -313,6 +318,7 @@ export function calcFundCashRoll(
       successFeeExitOutflow,
       debtServiceOutflow,
       distributionOutflow,
+      redemptionOutflow,
       cashEnd,
     })
 

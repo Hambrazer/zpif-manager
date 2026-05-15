@@ -263,6 +263,7 @@ function makeRoll(
     successFeeExitOutflow: 0,
     debtServiceOutflow: 0,
     distributionOutflow: 0,
+    redemptionOutflow: 0,
     cashEnd: 0,
     ...overrides,
   }
@@ -280,29 +281,29 @@ describe('calcInvestorIRR', () => {
     return out
   }
 
-  it('emission 100k в t=0, cashEnd 110k через 12 интервалов → IRR≈10% годовых', () => {
+  it('emission 100k в t=0, redemption 110k через 12 интервалов → IRR≈10% годовых', () => {
     const roll = makeRange(12) // 13 периодов, 12 интервалов
     roll[0] = makeRoll(2026, 1, { emissionInflow: 100_000 })
-    roll[12] = makeRoll(2027, 1, { cashEnd: 110_000 })
+    roll[12] = makeRoll(2027, 1, { redemptionOutflow: 110_000 })
     expect(calcInvestorIRR(roll)).toBeCloseTo(0.10, 3)
   })
 
   it('upfront fee увеличивает отток t=0 и снижает IRR', () => {
     const noFee = makeRange(12)
     noFee[0] = makeRoll(2026, 1, { emissionInflow: 100_000 })
-    noFee[12] = makeRoll(2027, 1, { cashEnd: 110_000 })
+    noFee[12] = makeRoll(2027, 1, { redemptionOutflow: 110_000 })
 
     const withFee = makeRange(12)
     withFee[0] = makeRoll(2026, 1, { emissionInflow: 100_000, upfrontFeeOutflow: 5_000 })
-    withFee[12] = makeRoll(2027, 1, { cashEnd: 110_000 })
+    withFee[12] = makeRoll(2027, 1, { redemptionOutflow: 110_000 })
 
     expect(calcInvestorIRR(withFee)).toBeLessThan(calcInvestorIRR(noFee))
   })
 
-  it('emission и cashEnd одинаковые, distributions=0 → IRR≈0', () => {
+  it('emission и redemption одинаковые, distributions=0 → IRR≈0', () => {
     const roll = makeRange(12)
     roll[0] = makeRoll(2026, 1, { emissionInflow: 100_000 })
-    roll[12] = makeRoll(2027, 1, { cashEnd: 100_000 })
+    roll[12] = makeRoll(2027, 1, { redemptionOutflow: 100_000 })
     expect(calcInvestorIRR(roll)).toBeCloseTo(0, 5)
   })
 
@@ -322,10 +323,10 @@ describe('calcInvestorIRR', () => {
 
   it('единственный период → 0 (нет смены знака для IRR)', () => {
     const roll: MonthlyCashRoll[] = [
-      makeRoll(2026, 1, { emissionInflow: 100_000, cashEnd: 100_000 }),
+      makeRoll(2026, 1, { emissionInflow: 100_000, redemptionOutflow: 100_000 }),
     ]
-    // при одном периоде flow = emissionInflow + cashEnd (поскольку это и t=0, и t=last):
-    // первая ветка возвращает −(emission+upfront) → −100_000, IRR не определён
+    // При одном периоде ветка t=0 срабатывает первой и возвращает −(emission+upfront) → −100_000.
+    // IRR не определён — нет смены знака.
     expect(calcInvestorIRR(roll)).toBe(0)
   })
 })

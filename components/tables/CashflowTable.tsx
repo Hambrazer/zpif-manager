@@ -50,7 +50,7 @@ function fundFCF(r: MonthlyCashRoll): number {
 
 function investorCF(r: MonthlyCashRoll, idx: number, all: readonly MonthlyCashRoll[]): number {
   if (idx === 0)               return -(r.emissionInflow + r.upfrontFeeOutflow)
-  if (idx === all.length - 1)  return r.distributionOutflow + r.cashEnd
+  if (idx === all.length - 1)  return r.distributionOutflow + r.redemptionOutflow
   return r.distributionOutflow
 }
 
@@ -71,7 +71,8 @@ const FUND_ROWS: readonly RowSpec<MonthlyCashRoll>[] = [
 
   { key: 'fundFCF',   kind: 'subtotal', label: 'FCF фонда', bold: true, colored: true, separator: true, getValue: r => fundFCF(r) },
 
-  { key: 'dist',      kind: 'data', label: 'Выплаты пайщикам', isExpense: true, separator: true, getValue: r => r.distributionOutflow },
+  { key: 'dist',       kind: 'data', label: 'Выплаты пайщикам',  isExpense: true, getValue: r => r.distributionOutflow },
+  { key: 'redemption', kind: 'data', label: 'Погашение паёв',     isExpense: true, separator: true, getValue: r => r.redemptionOutflow },
 
   { key: 'sec-fin',   kind: 'sectionHeader', label: 'ФИНАНСОВЫЙ ДЕНЕЖНЫЙ ПОТОК' },
   { key: 'emission',  kind: 'data', label: 'Эмиссия', indent: true, getValue: r => r.emissionInflow },

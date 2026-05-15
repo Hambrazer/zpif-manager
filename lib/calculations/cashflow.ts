@@ -24,6 +24,27 @@ function lastDayOfMonth(period: MonthlyPeriod): Date {
   return new Date(period.year, period.month, 0)
 }
 
+/**
+ * Строит горизонт CF объекта: projectionYears × 12 месяцев от purchaseDate
+ * (или от текущей даты, если purchaseDate не задана). Не зависит от фонда.
+ */
+export function buildPropertyPeriods(
+  purchaseDate: Date | null,
+  projectionYears: number
+): MonthlyPeriod[] {
+  const start = purchaseDate ?? new Date()
+  const startYear = start.getFullYear()
+  const startMonth = start.getMonth() + 1
+  const totalMonths = projectionYears * 12
+  return Array.from({ length: totalMonths }, (_, i) => {
+    const totalMonth = startMonth - 1 + i
+    return {
+      year: startYear + Math.floor(totalMonth / 12),
+      month: (totalMonth % 12) + 1,
+    }
+  })
+}
+
 function periodKey(p: MonthlyPeriod): string {
   return `${p.year}-${p.month}`
 }

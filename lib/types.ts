@@ -148,6 +148,7 @@ export type MonthlyCashRoll = {
   successFeeExitOutflow: number                 // разово в endDate
   debtServiceOutflow: number
   distributionOutflow: number                   // выплаты пайщикам
+  redemptionOutflow: number                     // V4.2.3: погашение паёв (≠ 0 только в endDate)
   // Итог
   cashEnd: number
 }

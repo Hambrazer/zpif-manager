@@ -138,8 +138,8 @@ export function calcNAVPerUnit(nav: number, totalUnits: number): number {
  *
  * Денежный поток пайщика по периодам:
  *   t=0:           −(emissionInflow + upfrontFeeOutflow)
- *   t=последний:    distributionOutflow + cashEnd  (последняя выплата + остаточный кэш фонда)
- *   иначе:          distributionOutflow            (текущие выплаты пайщикам)
+ *   t=последний:    distributionOutflow + redemptionOutflow  (последняя выплата + погашение паёв)
+ *   иначе:          distributionOutflow                       (текущие выплаты пайщикам)
  *
  * IRR помесячный → годовой = (1 + r)^12 − 1.
  * Если NaN (нет смены знака) — возвращает 0.
@@ -150,7 +150,7 @@ export function calcInvestorIRR(cashRoll: MonthlyCashRoll[]): number {
   const lastIdx = cashRoll.length - 1
   const flows = cashRoll.map((r, i) => {
     if (i === 0)       return -(r.emissionInflow + r.upfrontFeeOutflow)
-    if (i === lastIdx) return r.distributionOutflow + r.cashEnd
+    if (i === lastIdx) return r.distributionOutflow + r.redemptionOutflow
     return r.distributionOutflow
   })
 

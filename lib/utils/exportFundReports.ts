@@ -75,6 +75,7 @@ export function exportFundCashflowReportToExcel(
     { label: 'FCF фонда',                  values: items.map(r => opCF(r) + invCF(r)) },
 
     { label: 'Выплаты пайщикам',           isExpense: true, values: items.map(r => -r.distributionOutflow) },
+    { label: 'Погашение паёв',             isExpense: true, values: items.map(r => -r.redemptionOutflow) },
 
     { label: 'ФИНАНСОВЫЙ ДЕНЕЖНЫЙ ПОТОК',  values: items.map(() => '') },
     { label: '  Эмиссия',                  values: items.map(r => r.emissionInflow) },

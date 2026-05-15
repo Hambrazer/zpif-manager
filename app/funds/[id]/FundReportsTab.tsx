@@ -241,7 +241,7 @@ function buildInvestorSummary(
   // Поток инвестора помесячно — для накопительного IRR
   const investorFlows = cashRoll.map((r, i) => {
     if (i === 0)                      return -(r.emissionInflow + r.upfrontFeeOutflow)
-    if (i === cashRoll.length - 1)    return r.distributionOutflow + r.cashEnd
+    if (i === cashRoll.length - 1)    return r.distributionOutflow + r.redemptionOutflow
     return r.distributionOutflow
   })
 

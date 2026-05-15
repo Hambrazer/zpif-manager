@@ -198,10 +198,11 @@ describe('calcFundCashRoll', () => {
     expect(calcFundCashRoll(fund, [], [])).toHaveLength(0)
   })
 
-  it('один месяц: emission + NOI, нулевые комиссии, MONTHLY → правильный cashEnd', () => {
-    // Fund Jan 2024 – Jan 2024 (1 период)
+  it('один месяц: emission + NOI, нулевые комиссии, MONTHLY → погашение паёв в endPeriod', () => {
+    // Fund Jan 2024 – Jan 2024 (1 период, он же endPeriod)
     // totalEmission=10M, NOI=100k, distributions=MONTHLY (100k)
-    // cashEnd = 0 + 10M + 100k - 100k = 10M
+    // cashBeforeRedemption = 0 + 10M + 100k - 100k = 10M
+    // V4.2.3: в endPeriod весь остаток уходит как redemptionOutflow, cashEnd обнуляется.
 
     const fund = makeMinimalFund({
       startDate: new Date(2024, 0, 1),
@@ -217,12 +218,14 @@ describe('calcFundCashRoll', () => {
     expect(row.emissionInflow).toBe(10_000_000)
     expect(row.noiInflow).toBeCloseTo(100_000, 0)
     expect(row.distributionOutflow).toBeCloseTo(100_000, 0)
-    expect(row.cashEnd).toBeCloseTo(10_000_000, 0)
+    expect(row.redemptionOutflow).toBeCloseTo(10_000_000, 0)
+    expect(row.cashEnd).toBe(0)
     expect(row.cashBegin).toBe(0)
   })
 
-  it('три месяца: кэш стабилен при ежемесячном распределении NOI', () => {
+  it('три месяца: кэш стабилен в первых двух, в endPeriod уходит как погашение паёв', () => {
     // Emission 10M в Jan, NOI=100k/мес, MONTHLY distributions → cashEnd всегда 10M
+    // V4.2.3: в last period (Mar) весь остаток уходит как redemptionOutflow.
 
     const fund = makeMinimalFund()
     const cashflows = Array.from({ length: 16 }, (_, i) => makeCF(2024, i + 1, 100_000))
@@ -233,9 +236,11 @@ describe('calcFundCashRoll', () => {
     expect(result).toHaveLength(3)
     // Первый период: emission - distribution = 10M
     expect(result[0]!.cashEnd).toBeCloseTo(10_000_000, 0)
-    // Второй и третий: cashBegin=10M, NOI distributed → cashEnd остаётся 10M
+    // Второй: cashBegin=10M, NOI distributed → cashEnd остаётся 10M
     expect(result[1]!.cashEnd).toBeCloseTo(10_000_000, 0)
-    expect(result[2]!.cashEnd).toBeCloseTo(10_000_000, 0)
+    // Третий (endPeriod): cashEnd=0, redemptionOutflow=10M
+    expect(result[2]!.cashEnd).toBe(0)
+    expect(result[2]!.redemptionOutflow).toBeCloseTo(10_000_000, 0)
   })
 
   it('QUARTERLY: NOI накапливается 2 месяца, выплачивается в 3-м', () => {
@@ -355,7 +360,7 @@ describe('calcFundCashRoll', () => {
     expect(result[0]!.successFeeOperationalOutflow).toBeCloseTo(50_000, 0)
   })
 
-  it('нет объектов: только emission и нулевые потоки', () => {
+  it('нет объектов: только emission, в endPeriod кэш уходит как погашение паёв', () => {
     const fund = makeMinimalFund()
     const result = calcFundCashRoll(fund, [], [])
 
@@ -365,7 +370,9 @@ describe('calcFundCashRoll', () => {
     expect(result[0]!.cashEnd).toBeCloseTo(10_000_000, 0)
     // Кэш не меняется без NOI
     expect(result[1]!.cashEnd).toBeCloseTo(10_000_000, 0)
-    expect(result[2]!.cashEnd).toBeCloseTo(10_000_000, 0)
+    // V4.2.3: в endPeriod (Mar) cashEnd=0, redemptionOutflow=10M
+    expect(result[2]!.cashEnd).toBe(0)
+    expect(result[2]!.redemptionOutflow).toBeCloseTo(10_000_000, 0)
   })
 
   it('cashBegin каждого периода = cashEnd предыдущего', () => {
@@ -435,5 +442,54 @@ describe('calcFundCashRoll', () => {
     const result = calcFundCashRoll(fund, [propA, propB], [])
 
     expect(result[0]!.noiInflow).toBeCloseTo(150_000, 0)
+  })
+
+  // ─── V4.2.4: продажа в последний месяц фонда — disposalInflow по собств. NOI ──
+  it('продажа в last месяц фонда: disposalInflow = forward 12M NOI из собственного CF (за пределами фонда)', () => {
+    // Фонд Jan–Dec 2024 (12 месяцев). Объект продаётся в Dec 2024 (last месяц).
+    // Полный CF объекта тянется на 36 месяцев (projectionYears=3) с NOI=100k/мес.
+    // 12 forward месяцев от Dec 2024 — это Jan2025..Dec2025 (за пределами endDate фонда).
+    // disposalInflow = 1.2M / 0.10 = 12M (× ownership=100%).
+    const fund = makeMinimalFund({
+      startDate: new Date(2024, 0, 1),
+      endDate: new Date(2024, 11, 31),
+    })
+    const cashflows = Array.from({ length: 36 }, (_, i) => {
+      const totalMonth = i
+      return makeCF(
+        2024 + Math.floor(totalMonth / 12),
+        (totalMonth % 12) + 1,
+        100_000,
+      )
+    })
+    const prop = makePropCF({
+      cashflows,
+      saleDate: new Date(2024, 11, 1), // Dec 2024 — last месяц фонда
+      exitCapRate: 0.10,
+    })
+
+    const result = calcFundCashRoll(fund, [prop], [])
+
+    expect(result).toHaveLength(12)
+    expect(result[11]!.period).toEqual({ year: 2024, month: 12 })
+    expect(result[11]!.disposalInflow).toBeCloseTo(12_000_000, 0)
+  })
+
+  // ─── V4.2.4: redemptionOutflow в последнем периоде ────────────────────────────
+  it('redemptionOutflow в endPeriod = весь cashEnd_before_redemption, после redemption cashEnd=0', () => {
+    // Эмиссия 10M, NOI=0, без выплат и комиссий, фонд Jan–Mar 2024 (3 месяца, ANNUAL).
+    // Кэш на конец Mar (до redemption) = 10M (из эмиссии). Все эти 10M уходят как
+    // redemptionOutflow, cashEnd = 0.
+    const fund = makeMinimalFund({ distributionPeriodicity: 'ANNUAL' })
+    const result = calcFundCashRoll(fund, [], [])
+
+    expect(result).toHaveLength(3)
+    // Первые два месяца: redemption = 0, cashEnd накапливается (в данном кейсе 10M)
+    expect(result[0]!.redemptionOutflow).toBe(0)
+    expect(result[1]!.redemptionOutflow).toBe(0)
+    expect(result[1]!.cashEnd).toBeCloseTo(10_000_000, 0)
+    // Третий (endPeriod): redemption забирает весь остаток, cashEnd=0
+    expect(result[2]!.redemptionOutflow).toBeCloseTo(10_000_000, 0)
+    expect(result[2]!.cashEnd).toBe(0)
   })
 })

@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/utils/auth'
-import { calcPropertyCashflow, type PropertyExpenseInput } from '@/lib/calculations/cashflow'
-import { calcFundCashRoll, generatePeriods, type PropertyCFInput } from '@/lib/calculations/fund-cashflow'
+import { calcPropertyCashflow, buildPropertyPeriods, type PropertyExpenseInput } from '@/lib/calculations/cashflow'
+import { calcFundCashRoll, type PropertyCFInput } from '@/lib/calculations/fund-cashflow'
 import type {
   LeaseInput,
   CapexInput,
@@ -40,13 +40,14 @@ export async function GET(_req: Request, { params }: Params) {
       },
     })
 
-    const periods = generatePeriods(fund.startDate, fund.endDate)
-
     const propertyCashflowMap: Record<string, ReturnType<typeof calcPropertyCashflow>> = {}
     const propertyCFInputs: PropertyCFInput[] = []
 
     for (const fp of fund.properties) {
       const property = fp.property
+      // Полный CF объекта на projectionYears (не урезается горизонтом фонда —
+      // нужен для disposalInflow и стоимости объекта в NAV, см. V4.2.2).
+      const periods = buildPropertyPeriods(property.purchaseDate, property.projectionYears)
       const propertyInput: PropertyExpenseInput = {
         rentableArea: property.rentableArea,
         opexRate: property.opexRate,

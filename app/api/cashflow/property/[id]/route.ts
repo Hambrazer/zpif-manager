@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/utils/auth'
-import { calcPropertyCashflow, type PropertyExpenseInput } from '@/lib/calculations/cashflow'
-import type { LeaseInput, CapexInput, CapexReserveInput, MonthlyPeriod, IndexationType } from '@/lib/types'
+import { calcPropertyCashflow, buildPropertyPeriods, type PropertyExpenseInput } from '@/lib/calculations/cashflow'
+import type { LeaseInput, CapexInput, CapexReserveInput, IndexationType } from '@/lib/types'
 
 type Params = { params: { id: string } }
 
@@ -10,11 +10,6 @@ export async function GET(req: Request, { params }: Params) {
   if (authError) return authError
 
   const { searchParams } = new URL(req.url)
-
-  const now = new Date()
-  const startYear = parseInt(searchParams.get('startYear') ?? String(now.getFullYear()), 10)
-  const startMonth = parseInt(searchParams.get('startMonth') ?? String(now.getMonth() + 1), 10)
-  const projectionYears = parseInt(searchParams.get('projectionYears') ?? '10', 10)
   const cpiRate = parseFloat(searchParams.get('cpiRate') ?? '0.07')
 
   try {
@@ -26,6 +21,8 @@ export async function GET(req: Request, { params }: Params) {
         capexReserve: true,
       },
     })
+
+    const periods = buildPropertyPeriods(property.purchaseDate, property.projectionYears)
 
     const propertyInput: PropertyExpenseInput = {
       rentableArea: property.rentableArea,
@@ -68,15 +65,6 @@ export async function GET(req: Request, { params }: Params) {
       amount: c.amount,
       plannedDate: c.plannedDate,
     }))
-
-    const totalMonths = projectionYears * 12
-    const periods: MonthlyPeriod[] = Array.from({ length: totalMonths }, (_, i) => {
-      const totalMonth = startMonth - 1 + i
-      return {
-        year: startYear + Math.floor(totalMonth / 12),
-        month: (totalMonth % 12) + 1,
-      }
-    })
 
     const capexReserve: CapexReserveInput | null = property.capexReserve
       ? {

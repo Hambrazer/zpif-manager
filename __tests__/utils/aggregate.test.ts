@@ -87,6 +87,7 @@ function makeRoll(year: number, month: number, fields: Partial<MonthlyCashRoll> 
     managementFeeOutflow: 0, fundExpensesOutflow: 0,
     successFeeOperationalOutflow: 0, successFeeExitOutflow: 0,
     debtServiceOutflow: 0, distributionOutflow: 0,
+    redemptionOutflow: 0,
     cashEnd: 0,
     ...fields,
   }
