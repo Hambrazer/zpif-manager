@@ -11,6 +11,7 @@ import type { GanttLease } from '@/components/charts/GanttChart'
 import { exportRentRollToExcel } from '@/lib/utils/exportRentRoll'
 import { CashflowChart } from '@/components/charts/CashflowChart'
 import { CashflowTable } from '@/components/tables/CashflowTable'
+import { ReportsTab } from './ReportsTab'
 import type { MonthlyCashflow } from '@/lib/types'
 // Обоснованное исключение из правила «расчёты только в lib/calculations»:
 // интерактивный пересчёт DCF при изменении exitCapRate выполняется на клиенте.
@@ -257,7 +258,30 @@ export function PropertyPage({ property }: { property: PropertyData }) {
                 cfError={cfError}
               />
             )}
-            {activeTab === 'reports' && <PlaceholderTab text="Раздел отчётов будет добавлен в следующей версии." />}
+            {activeTab === 'reports' && (
+              <ReportsTab
+                propertyId={property.id}
+                propertyName={property.name}
+                rentableArea={property.rentableArea}
+                cashflows={cashflows}
+                cfLoading={cfLoading}
+                cfError={cfError}
+                leases={property.leaseContracts.map(l => ({
+                  id: l.id,
+                  tenantName: l.tenantName,
+                  area: l.area,
+                  baseRent: l.baseRent,
+                  opexReimbursementRate: l.opexReimbursementRate,
+                  startDate: l.startDate,
+                  endDate: l.endDate,
+                  status: l.status,
+                }))}
+                wacc={property.wacc}
+                projectionYears={property.projectionYears}
+                exitCapRate={property.exitCapRate}
+                acquisitionPrice={property.acquisitionPrice}
+              />
+            )}
           </div>
         </div>
       </main>

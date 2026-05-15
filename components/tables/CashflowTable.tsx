@@ -20,9 +20,14 @@ type RowSpec<T> = {
 
 export type CashflowTableVariant = 'property' | 'fund'
 
+// V3.9.1: периодичность колонок таблицы. По умолчанию 'monthly' — поведение
+// прежнее (метка = название месяца). 'quarterly' даёт Q1/Q2/Q3/Q4 как метку
+// колонки внутри года; 'annual' прячет помесячные метки.
+export type CashflowTablePeriodicity = 'monthly' | 'quarterly' | 'annual'
+
 type Props =
-  | { variant?: 'property'; cashflows: MonthlyCashflow[] }
-  | { variant: 'fund'; cashRoll: MonthlyCashRoll[] }
+  | { variant?: 'property'; cashflows: MonthlyCashflow[]; periodicity?: CashflowTablePeriodicity }
+  | { variant: 'fund'; cashRoll: MonthlyCashRoll[]; periodicity?: CashflowTablePeriodicity }
 
 // ─── Конфигурация строк фонда (ОДДС) ─────────────────────────────────────────
 
@@ -143,6 +148,14 @@ function monthLabel(month: number): string {
   return MONTHS_SHORT[month - 1] ?? String(month)
 }
 
+function periodCellLabel(month: number, periodicity: CashflowTablePeriodicity): string {
+  switch (periodicity) {
+    case 'monthly':   return monthLabel(month)
+    case 'quarterly': return `Q${Math.ceil(month / 3)}`
+    case 'annual':    return 'год'
+  }
+}
+
 type CellDisplay = {
   text: string
   className: string
@@ -200,9 +213,10 @@ function groupByYear(items: readonly { period: MonthlyPeriod }[]): YearGroup[] {
 type TableProps<T extends { period: MonthlyPeriod }> = {
   items: readonly T[]
   rows: readonly RowSpec<T>[]
+  periodicity?: CashflowTablePeriodicity
 }
 
-function TableInner<T extends { period: MonthlyPeriod }>({ items, rows }: TableProps<T>) {
+function TableInner<T extends { period: MonthlyPeriod }>({ items, rows, periodicity = 'monthly' }: TableProps<T>) {
   const yearGroups = groupByYear(items)
 
   return (
@@ -233,7 +247,7 @@ function TableInner<T extends { period: MonthlyPeriod }>({ items, rows }: TableP
                 key={idx}
                 className="px-3 py-1.5 text-center text-xs font-medium text-gray-400 whitespace-nowrap min-w-[68px] border-r border-gray-100 last:border-r-0"
               >
-                {monthLabel(it.period.month)}
+                {periodCellLabel(it.period.month, periodicity)}
               </th>
             ))}
           </tr>
@@ -305,15 +319,17 @@ function TableInner<T extends { period: MonthlyPeriod }>({ items, rows }: TableP
 // ─── Публичный компонент ─────────────────────────────────────────────────────
 
 export function CashflowTable(props: Props) {
+  const periodicity = props.periodicity ?? 'monthly'
+
   if (props.variant === 'fund') {
     if (props.cashRoll.length === 0) {
       return <div className="text-sm text-gray-400 py-8 text-center">Нет данных для отображения</div>
     }
-    return <TableInner items={props.cashRoll} rows={FUND_ROWS} />
+    return <TableInner items={props.cashRoll} rows={FUND_ROWS} periodicity={periodicity} />
   }
 
   if (props.cashflows.length === 0) {
     return <div className="text-sm text-gray-400 py-8 text-center">Нет данных для отображения</div>
   }
-  return <TableInner items={props.cashflows} rows={buildPropertyRows(props.cashflows)} />
+  return <TableInner items={props.cashflows} rows={buildPropertyRows(props.cashflows)} periodicity={periodicity} />
 }

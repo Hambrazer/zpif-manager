@@ -7,6 +7,7 @@ import { AddPropertyToFundModal } from '@/components/modals/AddPropertyToFundMod
 import { FundCashflowBlock } from './FundCashflowBlock'
 import { FundChartsBlock } from './FundChartsBlock'
 import { PropertiesTable } from '@/components/tables/PropertiesTable'
+import { FundReportsTab } from './FundReportsTab'
 import { NavChart } from '@/components/charts/NavChart'
 import type { ReturnPoint } from '@/components/charts/ReturnChart'
 import { formatRub, formatPct, formatDate } from '@/lib/utils/format'
@@ -27,6 +28,12 @@ type PropertySummary = {
   totalArea: number
   rentableArea: number
   acquisitionPrice: number | null
+  // V3.8.5 + V3.9.2: many-to-many + данные для отчётов
+  ownershipPct: number
+  exitCapRate: number | null
+  purchaseDate: string | null
+  saleDate: string | null
+  wault: number
 }
 
 type FundData = {
@@ -116,8 +123,16 @@ function buildReturnPoints(
 
 // ─── Компонент ────────────────────────────────────────────────────────────────
 
+type FundTab = 'overview' | 'reports'
+
+const FUND_TABS: { id: FundTab; label: string }[] = [
+  { id: 'overview', label: 'Обзор'   },
+  { id: 'reports',  label: 'Отчёты'  },
+]
+
 export function FundPage({ fund }: Props) {
   const router = useRouter()
+  const [activeTab, setActiveTab] = useState<FundTab>('overview')
   const [showAddProperty, setShowAddProperty] = useState(false)
   const [navData, setNavData] = useState<NAVResult[] | null>(null)
   const [cashflows, setCashflows] = useState<MonthlyCashflow[]>([])
@@ -221,6 +236,25 @@ export function FundPage({ fund }: Props) {
           </div>
         </div>
 
+        {/* ── Вкладки ── */}
+        <div className="flex items-center gap-1 border-b border-gray-200">
+          {FUND_TABS.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={
+                'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ' +
+                (activeTab === tab.id
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700')
+              }
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === 'overview' && <>
         {/* ── Блок 1: СЧА / РСП ── */}
         <section className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-base font-semibold text-gray-900 mb-4">Динамика СЧА и РСП</h2>
@@ -293,6 +327,30 @@ export function FundPage({ fund }: Props) {
             />
           )}
         </section>
+        </>}
+
+        {activeTab === 'reports' && (
+          <FundReportsTab
+            fundId={fund.id}
+            fundName={fund.name}
+            totalEmission={fund.totalEmission}
+            totalUnits={fund.totalUnits}
+            cashRoll={cashRoll}
+            navData={navData}
+            cfLoading={cfLoading}
+            cfError={cfError}
+            properties={fund.properties.map(p => ({
+              id: p.id,
+              name: p.name,
+              rentableArea: p.rentableArea,
+              ownershipPct: p.ownershipPct,
+              exitCapRate: p.exitCapRate,
+              purchaseDate: p.purchaseDate,
+              saleDate: p.saleDate,
+              wault: p.wault,
+            }))}
+          />
+        )}
       </main>
 
       {/* ── Модальное окно «Добавить объект из pipeline» (V3.8.4) ── */}
