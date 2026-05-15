@@ -14,7 +14,10 @@ export default async function PropertyDetailPage({ params }: Props) {
   const property = await prisma.property.findUnique({
     where: { id: params.id },
     include: {
-      fund: { select: { id: true, name: true, startDate: true, endDate: true } },
+      funds: {
+        include: { fund: { select: { id: true, name: true, startDate: true, endDate: true } } },
+        orderBy: { addedAt: 'asc' },
+      },
       leaseContracts: { orderBy: { startDate: 'asc' } },
     },
   })
@@ -39,12 +42,23 @@ export default async function PropertyDetailPage({ params }: Props) {
     new Date()
   )
 
+  // V3.8.1: объект может быть в нескольких фондах или ни в одном (pipeline).
+  // Для хедера/breadcrumb берём первый привязанный фонд (если он есть).
+  const primaryFund = property.funds[0]?.fund ?? null
+
   const data = {
     id: property.id,
-    fundId: property.fund.id,
-    fundName: property.fund.name,
-    fundStartDate: property.fund.startDate.toISOString(),
-    fundEndDate: property.fund.endDate.toISOString(),
+    fundId: primaryFund?.id ?? null,
+    fundName: primaryFund?.name ?? null,
+    fundStartDate: primaryFund?.startDate.toISOString() ?? null,
+    fundEndDate: primaryFund?.endDate.toISOString() ?? null,
+    pipelineStatus: property.pipelineStatus as
+      'SCREENING' | 'DUE_DILIGENCE' | 'APPROVED' | 'IN_FUND' | 'REJECTED' | 'SOLD',
+    funds: property.funds.map(fp => ({
+      fundId: fp.fund.id,
+      fundName: fp.fund.name,
+      ownershipPct: fp.ownershipPct,
+    })),
     name: property.name,
     type: property.type as 'OFFICE' | 'WAREHOUSE' | 'RETAIL' | 'MIXED' | 'RESIDENTIAL',
     address: property.address,

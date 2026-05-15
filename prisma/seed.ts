@@ -5,6 +5,7 @@ import {
   LeaseStatus,
   AmortizationType,
   DistributionPeriodicity,
+  PipelineStatus,
 } from '@prisma/client'
 
 const prisma = new PrismaClient()
@@ -14,6 +15,7 @@ async function main() {
   await prisma.capexItem.deleteMany()
   await prisma.leaseContract.deleteMany()
   await prisma.fundDebt.deleteMany()
+  await prisma.fundProperty.deleteMany()
   await prisma.property.deleteMany()
   await prisma.fund.deleteMany()
 
@@ -80,7 +82,7 @@ async function main() {
   //   Налог на ЗУ: 350 000 000 × 0.15% = 525 000 ₽/год
   const prop1 = await prisma.property.create({
     data: {
-      fundId: fund1.id,
+      pipelineStatus: PipelineStatus.IN_FUND,
       name: 'Бизнес-центр «Арбат Плаза»',
       type: PropertyType.OFFICE,
       address: 'г. Москва, ул. Новый Арбат, д. 32',
@@ -176,7 +178,7 @@ async function main() {
   //   Налог на ЗУ: 500 000 000 × 0.15% = 750 000 ₽/год
   const prop2 = await prisma.property.create({
     data: {
-      fundId: fund1.id,
+      pipelineStatus: PipelineStatus.IN_FUND,
       name: 'Торговый центр «Галерея Запад»',
       type: PropertyType.RETAIL,
       address: 'г. Москва, Кутузовский пр-т, д. 74',
@@ -271,7 +273,7 @@ async function main() {
   //   Налог на ЗУ: 800 000 000 × 0.3% = 2 400 000 ₽/год (производственная земля МО)
   const prop3 = await prisma.property.create({
     data: {
-      fundId: fund2.id,
+      pipelineStatus: PipelineStatus.IN_FUND,
       name: 'Складской комплекс «Логистика Север»',
       type: PropertyType.WAREHOUSE,
       address: 'Московская обл., Дмитровский р-н, пос. Деденево',
@@ -339,6 +341,15 @@ async function main() {
       amount: 35_000_000,
       plannedDate: new Date('2025-08-01'),
     },
+  })
+
+  // ─── Привязка объектов к фондам через FundProperty (100% владения) ────────
+  await prisma.fundProperty.createMany({
+    data: [
+      { fundId: fund1.id, propertyId: prop1.id, ownershipPct: 100 },
+      { fundId: fund1.id, propertyId: prop2.id, ownershipPct: 100 },
+      { fundId: fund2.id, propertyId: prop3.id, ownershipPct: 100 },
+    ],
   })
 
   console.log('Фонд 1:', fund1.name, `(${fund1.totalUnits.toLocaleString('ru')} паёв)`)

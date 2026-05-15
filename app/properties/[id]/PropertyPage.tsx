@@ -59,12 +59,24 @@ type LeaseContract = {
 
 type TerminalType = 'EXIT_CAP_RATE' | 'GORDON'
 
-type PropertyData = {
-  id: string
+type PipelineStatus = 'SCREENING' | 'DUE_DILIGENCE' | 'APPROVED' | 'IN_FUND' | 'REJECTED' | 'SOLD'
+
+type FundLink = {
   fundId: string
   fundName: string
-  fundStartDate: string
-  fundEndDate: string
+  ownershipPct: number
+}
+
+type PropertyData = {
+  id: string
+  // V3.8.1: объект может быть в нескольких фондах или ни в одном (pipeline-only).
+  // fundId/fundName — первый привязанный фонд (для breadcrumb), null если pipeline.
+  fundId: string | null
+  fundName: string | null
+  fundStartDate: string | null
+  fundEndDate: string | null
+  pipelineStatus: PipelineStatus
+  funds: FundLink[]
   name: string
   type: PropertyType
   address: string
@@ -133,13 +145,24 @@ export function PropertyPage({ property }: { property: PropertyData }) {
               ← Портфель
             </Link>
             <span className="text-gray-300 shrink-0">/</span>
-            <Link
-              href={`/funds/${property.fundId}`}
-              className="text-sm text-gray-500 hover:text-gray-700 shrink-0 max-w-[140px] truncate"
-            >
-              {property.fundName}
-            </Link>
-            <span className="text-gray-300 shrink-0">/</span>
+            {property.fundId && property.fundName ? (
+              <>
+                <Link
+                  href={`/funds/${property.fundId}`}
+                  className="text-sm text-gray-500 hover:text-gray-700 shrink-0 max-w-[140px] truncate"
+                >
+                  {property.fundName}
+                </Link>
+                <span className="text-gray-300 shrink-0">/</span>
+              </>
+            ) : (
+              <>
+                <Link href="/pipeline" className="text-sm text-gray-500 hover:text-gray-700 shrink-0">
+                  Pipeline
+                </Link>
+                <span className="text-gray-300 shrink-0">/</span>
+              </>
+            )}
             <span className="text-sm font-medium text-gray-900 truncate">{property.name}</span>
           </div>
           <span className="text-lg font-semibold text-gray-900 shrink-0 ml-4">ЗПИФ Менеджер</span>
@@ -213,8 +236,8 @@ export function PropertyPage({ property }: { property: PropertyData }) {
                 wault={property.wault}
                 rentableArea={property.rentableArea}
                 propertyName={property.name}
-                fundStartDate={property.fundStartDate}
-                fundEndDate={property.fundEndDate}
+                {...(property.fundStartDate ? { fundStartDate: property.fundStartDate } : {})}
+                {...(property.fundEndDate ? { fundEndDate: property.fundEndDate } : {})}
               />
             )}
             {activeTab === 'expenses' && (
@@ -319,8 +342,8 @@ function TenantsTab({
   wault: number
   rentableArea: number
   propertyName: string
-  fundStartDate: string
-  fundEndDate: string
+  fundStartDate?: string
+  fundEndDate?: string
 }) {
   const router = useRouter()
   // 'new' — добавление нового арендатора, lease.id — редактирование существующего
@@ -606,8 +629,8 @@ function TenantsTab({
           </p>
           <GanttChart
             leases={leases as GanttLease[]}
-            fundStartDate={fundStartDate}
-            fundEndDate={fundEndDate}
+            {...(fundStartDate ? { fundStartDate } : {})}
+            {...(fundEndDate ? { fundEndDate } : {})}
           />
         </div>
       )}
@@ -1232,10 +1255,8 @@ function MainTab({ property }: { property: PropertyData }) {
         </p>
       </div>
       <PropertyForm
-        fundId={property.fundId}
         initialData={{
           id: property.id,
-          fundId: property.fundId,
           name: property.name,
           type: property.type,
           address: property.address,

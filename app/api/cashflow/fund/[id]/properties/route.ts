@@ -43,14 +43,19 @@ export async function GET(_req: Request, { params }: Params) {
       include: {
         properties: {
           include: {
-            leaseContracts: { include: { stepRents: true } },
-            capexItems: true,
+            property: {
+              include: {
+                leaseContracts: { include: { stepRents: true } },
+                capexItems: true,
+              },
+            },
           },
         },
       },
     })
 
-    const result: PropertyMetrics[] = fund.properties.map((property) => {
+    const result: PropertyMetrics[] = fund.properties.map((fp) => {
+      const property = fp.property
       const activeArea = property.leaseContracts
         .filter((lc) => lc.status === 'ACTIVE')
         .reduce((s, lc) => s + lc.area, 0)

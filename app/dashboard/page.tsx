@@ -33,8 +33,13 @@ export default async function DashboardPage() {
       _count: { select: { properties: true } },
       properties: {
         include: {
-          leaseContracts: { include: { stepRents: true } },
-          capexItems: true,
+          property: {
+            include: {
+              leaseContracts: { include: { stepRents: true } },
+              capexItems: true,
+              capexReserve: true,
+            },
+          },
         },
       },
       fundDebts: true,
@@ -59,7 +64,8 @@ export default async function DashboardPage() {
       return { year: startYear + Math.floor(m / 12), month: (m % 12) + 1 }
     })
 
-    for (const property of fund.properties) {
+    for (const fp of fund.properties) {
+      const property = fp.property
       const propertyInput: PropertyExpenseInput = {
         rentableArea: property.rentableArea,
         opexRate: property.opexRate,
@@ -133,7 +139,7 @@ export default async function DashboardPage() {
     }
 
     const approxNAV = fund.properties.reduce(
-      (sum, p) => sum + (p.acquisitionPrice ?? 0), 0
+      (sum, fp) => sum + (fp.property.acquisitionPrice ?? 0), 0
     )
     const annualFundExpenses = (fund.managementFeeRate + fund.fundExpensesRate) * approxNAV
 
@@ -151,7 +157,8 @@ export default async function DashboardPage() {
 
     // IRR инвестора: считается через cashRoll фонда на горизонте startDate–endDate
     const fundPeriods = generatePeriods(fund.startDate, fund.endDate)
-    const propertyCFInputs: PropertyCFInput[] = fund.properties.map(property => {
+    const propertyCFInputs: PropertyCFInput[] = fund.properties.map(fp => {
+      const property = fp.property
       const propertyInput: PropertyExpenseInput = {
         rentableArea: property.rentableArea,
         opexRate: property.opexRate,

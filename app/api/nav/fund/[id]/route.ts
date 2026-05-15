@@ -28,9 +28,13 @@ export async function GET(_req: Request, { params }: Params) {
       include: {
         properties: {
           include: {
-            leaseContracts: { include: { stepRents: true } },
-            capexItems: true,
-            capexReserve: true,
+            property: {
+              include: {
+                leaseContracts: { include: { stepRents: true } },
+                capexItems: true,
+                capexReserve: true,
+              },
+            },
           },
         },
         fundDebts: true,
@@ -42,7 +46,8 @@ export async function GET(_req: Request, { params }: Params) {
     const propertyCFInputs: PropertyCFInput[] = []
     const propertyValueInputs: PropertyValueInput[] = []
 
-    for (const property of fund.properties) {
+    for (const fp of fund.properties) {
+      const property = fp.property
       const propertyInput: PropertyExpenseInput = {
         rentableArea: property.rentableArea,
         opexRate: property.opexRate,

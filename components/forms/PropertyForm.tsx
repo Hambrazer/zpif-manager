@@ -20,7 +20,6 @@ const TERMINAL_TYPE_LABELS: Record<TerminalType, string> = {
 
 export type PropertyData = {
   id: string
-  fundId: string
   name: string
   type: PropertyType
   address: string
@@ -43,7 +42,6 @@ export type PropertyData = {
 }
 
 type Props = {
-  fundId: string
   initialData?: PropertyData
   onSuccess: (property: PropertyData) => void
   onCancel?: () => void
@@ -124,7 +122,7 @@ const emptyState: FormState = {
 const inputCls = 'w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50'
 const labelCls = 'block text-sm font-medium text-gray-700 mb-1'
 
-export function PropertyForm({ fundId, initialData, onSuccess, onCancel }: Props) {
+export function PropertyForm({ initialData, onSuccess, onCancel }: Props) {
   const [form, setForm] = useState<FormState>(
     initialData ? toFormState(initialData) : emptyState
   )
@@ -177,7 +175,6 @@ export function PropertyForm({ fundId, initialData, onSuccess, onCancel }: Props
     }
 
     const body = {
-      fundId,
       name: form.name.trim(),
       type: form.type,
       address: form.address.trim(),

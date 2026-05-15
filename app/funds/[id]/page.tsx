@@ -13,7 +13,7 @@ export default async function FundDetailPage({ params }: Props) {
   const fund = await prisma.fund.findUnique({
     where: { id: params.id },
     include: {
-      properties: { orderBy: { createdAt: 'asc' } },
+      properties: { include: { property: true }, orderBy: { addedAt: 'asc' } },
     },
   })
 
@@ -31,14 +31,15 @@ export default async function FundDetailPage({ params }: Props) {
     managementFeeRate: fund.managementFeeRate,
     fundExpensesRate: fund.fundExpensesRate,
     distributionPeriodicity: fund.distributionPeriodicity as 'MONTHLY' | 'QUARTERLY' | 'ANNUAL',
-    properties: fund.properties.map(p => ({
-      id: p.id,
-      name: p.name,
-      type: p.type as 'OFFICE' | 'WAREHOUSE' | 'RETAIL' | 'MIXED' | 'RESIDENTIAL',
-      address: p.address,
-      totalArea: p.totalArea,
-      rentableArea: p.rentableArea,
-      acquisitionPrice: p.acquisitionPrice,
+    properties: fund.properties.map(fp => ({
+      id: fp.property.id,
+      name: fp.property.name,
+      type: fp.property.type as 'OFFICE' | 'WAREHOUSE' | 'RETAIL' | 'MIXED' | 'RESIDENTIAL',
+      address: fp.property.address,
+      totalArea: fp.property.totalArea,
+      rentableArea: fp.property.rentableArea,
+      acquisitionPrice: fp.property.acquisitionPrice,
+      ownershipPct: fp.ownershipPct,
     })),
   }
 

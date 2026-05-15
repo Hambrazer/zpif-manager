@@ -14,7 +14,7 @@ export async function GET(_req: Request, { params }: Params) {
     const fund = await prisma.fund.findUniqueOrThrow({
       where: { id: params.id },
       include: {
-        properties: { orderBy: { createdAt: 'asc' } },
+        properties: { include: { property: true }, orderBy: { addedAt: 'asc' } },
         fundDebts: true,
         _count: { select: { properties: true } },
       },

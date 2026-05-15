@@ -1,9 +1,10 @@
-import { type PropertyType, type TerminalType } from '@prisma/client'
+import { type PropertyType, type TerminalType, type PipelineStatus } from '@prisma/client'
 import { prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/utils/auth'
 
 const VALID_PROPERTY_TYPES = new Set<PropertyType>(['OFFICE', 'WAREHOUSE', 'RETAIL', 'MIXED', 'RESIDENTIAL'])
 const VALID_TERMINAL_TYPES = new Set<TerminalType>(['EXIT_CAP_RATE', 'GORDON'])
+const VALID_PIPELINE_STATUSES = new Set<PipelineStatus>(['SCREENING', 'DUE_DILIGENCE', 'APPROVED', 'IN_FUND', 'REJECTED', 'SOLD'])
 
 export async function GET(req: Request) {
   const authError = await requireAuth()
@@ -11,11 +12,21 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url)
   const fundId = searchParams.get('fundId')
+  const status = searchParams.get('status')
+
+  const whereClauses: Record<string, unknown> = {}
+  if (fundId) whereClauses['funds'] = { some: { fundId } }
+  if (status && VALID_PIPELINE_STATUSES.has(status as PipelineStatus)) {
+    whereClauses['pipelineStatus'] = status as PipelineStatus
+  }
 
   try {
     const properties = await prisma.property.findMany({
-      ...(fundId ? { where: { fundId } } : {}),
-      include: { _count: { select: { leaseContracts: true } } },
+      ...(Object.keys(whereClauses).length > 0 ? { where: whereClauses } : {}),
+      include: {
+        _count: { select: { leaseContracts: true } },
+        funds: { include: { fund: { select: { id: true, name: true } } } },
+      },
       orderBy: { createdAt: 'asc' },
     })
     return Response.json({ data: properties })
@@ -38,7 +49,6 @@ export async function POST(req: Request) {
     const b = body as Record<string, unknown>
 
     if (
-      typeof b['fundId'] !== 'string' ||
       typeof b['name'] !== 'string' ||
       !VALID_PROPERTY_TYPES.has(b['type'] as PropertyType) ||
       typeof b['address'] !== 'string' ||
@@ -61,14 +71,19 @@ export async function POST(req: Request) {
       ? Math.trunc(b['projectionYears'])
       : undefined // undefined → схема подставит дефолт 10
 
+    // Опциональная привязка к фонду при создании (для UX «создать из фонда»).
+    // Если fundId передан — создаём связь FundProperty и ставим IN_FUND, иначе — pipeline.
+    const fundId = typeof b['fundId'] === 'string' ? b['fundId'] : null
+    const ownershipPct = typeof b['ownershipPct'] === 'number' ? b['ownershipPct'] : 100
+
     const property = await prisma.property.create({
       data: {
-        fundId: b['fundId'] as string,
         name: b['name'] as string,
         type: b['type'] as PropertyType,
         address: b['address'] as string,
         totalArea: b['totalArea'] as number,
         rentableArea: b['rentableArea'] as number,
+        pipelineStatus: fundId ? 'IN_FUND' : 'SCREENING',
         cadastralValue: typeof b['cadastralValue'] === 'number' ? b['cadastralValue'] : null,
         landCadastralValue: typeof b['landCadastralValue'] === 'number' ? b['landCadastralValue'] : null,
         propertyTaxRate: b['propertyTaxRate'] as number,
@@ -83,6 +98,7 @@ export async function POST(req: Request) {
         ...(projectionYears !== undefined ? { projectionYears } : {}),
         ...(terminalType !== undefined ? { terminalType } : {}),
         gordonGrowthRate: typeof b['gordonGrowthRate'] === 'number' ? b['gordonGrowthRate'] : null,
+        ...(fundId ? { funds: { create: [{ fundId, ownershipPct }] } } : {}),
       },
     })
 

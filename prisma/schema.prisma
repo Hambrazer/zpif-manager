@@ -47,6 +47,15 @@ enum DistributionPeriodicity {
   ANNUAL
 }
 
+enum PipelineStatus {
+  SCREENING       // На рассмотрении
+  DUE_DILIGENCE   // Due Diligence
+  APPROVED        // Одобрен инвесткомитетом
+  IN_FUND         // В фонде (проставляется автоматически при привязке)
+  REJECTED        // Отклонён
+  SOLD            // Продан (только если был IN_FUND)
+}
+
 // ─── Фонд ─────────────────────────────────────────────────────────────────────
 
 model Fund {
@@ -68,38 +77,54 @@ model Fund {
   createdAt               DateTime                @default(now())
   updatedAt               DateTime                @updatedAt
 
-  properties              Property[]
+  properties              FundProperty[]          // связь many-to-many через FundProperty
   fundDebts               FundDebt[]
+}
+
+// ─── Связь фонд ↔ объект (many-to-many с долей владения) ──────────────────────
+
+model FundProperty {
+  id           String   @id @default(cuid())
+  fundId       String
+  propertyId   String
+  ownershipPct Float    @default(100) // % владения фонда в объекте (0–100)
+  addedAt      DateTime @default(now())
+
+  fund         Fund     @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([fundId, propertyId])
+  @@index([propertyId])
 }
 
 // ─── Объект недвижимости ──────────────────────────────────────────────────────
 
 model Property {
-  id                  String       @id @default(cuid())
-  fundId              String
+  id                  String         @id @default(cuid())
   name                String
   type                PropertyType
   address             String
-  totalArea           Float        // м²
-  rentableArea        Float        // GLA, м²
-  cadastralValue      Float?       // кадастровая стоимость здания, ₽
-  landCadastralValue  Float?       // кадастровая стоимость ЗУ, ₽
-  propertyTaxRate     Float        // ставка налога на имущество, в долях
-  landTaxRate         Float        // ставка налога на ЗУ, в долях
-  opexRate            Float        // ₽/м²/год (индексируется на ИПЦ)
-  maintenanceRate     Float        // эксплуатационные расходы, ₽/м²/год (индексируется на ИПЦ)
-  acquisitionPrice    Float?       // цена приобретения, ₽
-  purchaseDate        DateTime?    // дата покупки объекта фондом
-  saleDate            DateTime?    // дата продажи объекта фондом
-  exitCapRate         Float?       // cap rate продажи, в долях
-  wacc                Float        // ставка дисконтирования (WACC), в долях
-  projectionYears     Int          @default(10) // горизонт DCF в годах
-  terminalType        TerminalType @default(EXIT_CAP_RATE) // метод терминальной стоимости
-  gordonGrowthRate    Float?       // темп роста для модели Гордона, в долях
-  createdAt           DateTime     @default(now())
-  updatedAt           DateTime     @updatedAt
+  totalArea           Float          // м²
+  rentableArea        Float          // GLA, м²
+  pipelineStatus      PipelineStatus @default(SCREENING)
+  cadastralValue      Float?         // кадастровая стоимость здания, ₽
+  landCadastralValue  Float?         // кадастровая стоимость ЗУ, ₽
+  propertyTaxRate     Float          // ставка налога на имущество, в долях
+  landTaxRate         Float          // ставка налога на ЗУ, в долях
+  opexRate            Float          // ₽/м²/год (индексируется на ИПЦ)
+  maintenanceRate     Float          // эксплуатационные расходы, ₽/м²/год (индексируется на ИПЦ)
+  acquisitionPrice    Float?         // цена приобретения, ₽
+  purchaseDate        DateTime?      // дата покупки объекта фондом
+  saleDate            DateTime?      // дата продажи объекта фондом
+  exitCapRate         Float?         // cap rate продажи, в долях
+  wacc                Float          // ставка дисконтирования (WACC), в долях
+  projectionYears     Int            @default(10) // горизонт DCF в годах
+  terminalType        TerminalType   @default(EXIT_CAP_RATE) // метод терминальной стоимости
+  gordonGrowthRate    Float?         // темп роста для модели Гордона, в долях
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
 
-  fund                Fund                  @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  funds               FundProperty[]                // many-to-many через FundProperty
   leaseContracts      LeaseContract[]
   capexItems          CapexItem[]
   capexReserve        CapexReserve?
