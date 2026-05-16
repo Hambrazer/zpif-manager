@@ -15,28 +15,42 @@ function makeCF(year: number, month: number, noi: number, fcf: number): MonthlyC
 // ─── calcIRR ──────────────────────────────────────────────────────────────────
 
 describe('calcIRR', () => {
+  // V4.5.5: calcIRR теперь возвращает { value, flow, trace }.
   it('эталон: [-1000, 300, 300, 400, 500] → IRR ≈ 16.636%', () => {
-    // Реальный IRR = 16.636%, не 14.3% как в ARCHITECTURE.md — проверено Node.js
     const irr = calcIRR([-1000, 300, 300, 400, 500])
-    expect(irr).toBeCloseTo(0.16636, 4)
+    expect(irr.value).toBeCloseTo(0.16636, 4)
+  })
+
+  it('возвращает поток, по которому считался', () => {
+    const flows = [-1000, 300, 300, 400, 500]
+    const result = calcIRR(flows)
+    expect(result.flow).toEqual(flows)
+    expect(result.flow).not.toBe(flows) // защита от внешней мутации (slice)
+  })
+
+  it('возвращает trace с операндами по периодам', () => {
+    const result = calcIRR([-100, 110])
+    expect(result.trace.value).toBe(result.value)
+    expect(result.trace.operands).toHaveLength(2)
+    expect(result.trace.formula).toContain('IRR')
   })
 
   it('простой случай: [-100, 110] → IRR = 10%', () => {
-    expect(calcIRR([-100, 110])).toBeCloseTo(0.1, 6)
+    expect(calcIRR([-100, 110]).value).toBeCloseTo(0.1, 6)
   })
 
   it('при найденном IRR — NPV потока ≈ 0', () => {
     const flows = [-1000, 300, 300, 400, 500]
-    const irr = calcIRR(flows)
+    const irr = calcIRR(flows).value
     expect(calcNPV(flows, irr)).toBeCloseTo(0, 4)
   })
 
   it('нет смены знака (все отрицательные) → NaN', () => {
-    expect(calcIRR([-1000, -300, -200])).toBeNaN()
+    expect(calcIRR([-1000, -300, -200]).value).toBeNaN()
   })
 
   it('нет смены знака (все положительные) → NaN', () => {
-    expect(calcIRR([1000, 300, 200])).toBeNaN()
+    expect(calcIRR([1000, 300, 200]).value).toBeNaN()
   })
 })
 
@@ -54,7 +68,7 @@ describe('calcNPV', () => {
 
   it('при IRR-ставке NPV ≈ 0', () => {
     const flows = [-1000, 300, 300, 400, 500]
-    expect(calcNPV(flows, calcIRR(flows))).toBeCloseTo(0, 4)
+    expect(calcNPV(flows, calcIRR(flows).value)).toBeCloseTo(0, 4)
   })
 
   it('один поток при r=0 → тот же поток', () => {
@@ -131,9 +145,38 @@ describe('calcDCF', () => {
     const result = calcDCF(flows, 0.12, 0, 50_000)
     // annual IRR = (1 + monthly)^12 - 1; monthly > 0 → annual > monthly
     const monthlyFlows = [-50_000, ...flows.map(cf => cf.fcf)]
-    const { calcIRR: _calcIRR } = require('../../lib/calculations/dcf')
-    const irrMonthly = calcIRR(monthlyFlows)
+    const irrMonthly = calcIRR(monthlyFlows).value
     const irrAnnual = Math.pow(1 + irrMonthly, 12) - 1
     expect(result.irr).toBeCloseTo(irrAnnual, 6)
+  })
+
+  // ─── V4.5.8: trace инварианты для calcDCF (V4.5.5) ────────────────────────────
+  it('trace: terminalValueTrace.value === terminalValue', () => {
+    const flows = Array.from({ length: 24 }, (_, i) => makeCF(2024, (i % 12) + 1, 0, 10_000))
+    const result = calcDCF(flows, 0.10, 0.08, 100_000)
+    expect(result.terminalValueTrace?.value).toBeCloseTo(result.terminalValue, 0)
+    expect(result.terminalValueTrace?.formula).toContain('NOI')
+  })
+
+  it('trace: npvTrace.value === npv', () => {
+    const flows = Array.from({ length: 12 }, (_, i) => makeCF(2024, i + 1, 0, 5_000))
+    const result = calcDCF(flows, 0.12, 0.10, 50_000)
+    expect(result.npvTrace?.value).toBeCloseTo(result.npv, 4)
+  })
+
+  it('trace: irrTrace.value === irr и irrFlow возвращён при acquisitionPrice > 0', () => {
+    const flows = Array.from({ length: 12 }, (_, i) => makeCF(2024, i + 1, 0, 5_000))
+    const result = calcDCF(flows, 0.12, 0, 50_000)
+    expect(result.irrTrace?.value).toBeCloseTo(result.irr, 6)
+    expect(result.irrFlow).toBeDefined()
+    expect(result.irrFlow!.length).toBe(13) // -acquisitionPrice + 12 потоков
+  })
+
+  it('trace: при acquisitionPrice = 0 IRR не считается, irrTrace отсутствует', () => {
+    const flows = Array.from({ length: 12 }, (_, i) => makeCF(2024, i + 1, 0, 5_000))
+    const result = calcDCF(flows, 0.12, 0.10, 0)
+    expect(result.irr).toBe(0)
+    expect(result.irrTrace).toBeUndefined()
+    expect(result.irrFlow).toBeUndefined()
   })
 })

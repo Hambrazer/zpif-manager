@@ -238,12 +238,8 @@ function buildInvestorSummary(
 ): InvestorSummaryRow[] {
   if (cashRoll.length === 0 || totalEmission <= 0) return []
 
-  // Поток инвестора помесячно — для накопительного IRR
-  const investorFlows = cashRoll.map((r, i) => {
-    if (i === 0)                      return -(r.emissionInflow + r.upfrontFeeOutflow)
-    if (i === cashRoll.length - 1)    return r.distributionOutflow + r.redemptionOutflow
-    return r.distributionOutflow
-  })
+  // Поток инвестора помесячно — для накопительного IRR (V4.5.3: уже считается в calcFundCashRoll).
+  const investorFlows = cashRoll.map(r => r.investorCashflow)
 
   // Группируем по годам: выплаты + индексы месяцев года
   const distByYear   = new Map<number, number>()
@@ -277,7 +273,7 @@ function buildInvestorSummary(
       const navEoy = navByYear.get(year)?.nav ?? 0
       const flows = [...flowsToYear]
       flows[flows.length - 1] = (flows[flows.length - 1] ?? 0) + navEoy
-      const m = calcIRR(flows)
+      const m = calcIRR(flows).value
       if (!isNaN(m)) {
         const annual = Math.pow(1 + m, 12) - 1
         cumulativeIRR = isFinite(annual) ? annual : 0
@@ -305,7 +301,7 @@ function InvestorSummaryBody({
 }) {
   const rows = useMemo(() => buildInvestorSummary(cashRoll, navData, totalEmission), [cashRoll, navData, totalEmission])
   const totalDistributions = rows.reduce((s, r) => s + r.distributions, 0)
-  const finalIRR = useMemo(() => calcInvestorIRR(cashRoll), [cashRoll])
+  const finalIRR = useMemo(() => calcInvestorIRR(cashRoll).value, [cashRoll])
 
   if (rows.length === 0) return <Empty text="Нет данных по выплатам" />
 

@@ -140,6 +140,7 @@ function emptyCashRoll(period: MonthlyPeriod): AggregatedCashRoll {
     debtServiceOutflow: 0,
     distributionOutflow: 0,
     redemptionOutflow: 0,
+    investorCashflow: 0,
     cashEnd: 0,
   }
 }
@@ -189,6 +190,7 @@ export function aggregateFundCashRoll(
     agg.debtServiceOutflow += r.debtServiceOutflow
     agg.distributionOutflow += r.distributionOutflow
     agg.redemptionOutflow += r.redemptionOutflow
+    agg.investorCashflow += r.investorCashflow
   }
 
   // Финализируем cashBegin/cashEnd окна

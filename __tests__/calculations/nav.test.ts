@@ -33,6 +33,7 @@ function makeCashRoll(year: number, month: number, cashEnd: number): MonthlyCash
     successFeeOperationalOutflow: 0, successFeeExitOutflow: 0,
     debtServiceOutflow: 0, distributionOutflow: 0,
     redemptionOutflow: 0,
+    investorCashflow: 0,
     cashEnd,
   }
 }
@@ -273,6 +274,51 @@ describe('calcNAVTimeSeries', () => {
 
     expect(result[0]!.period).toEqual({ year: 2024, month: 12 })
     expect(result[0]!.propertyValue).toBeCloseTo(12_000_000, 0)
+  })
+
+  // ─── V4.5.8: trace инварианты ─────────────────────────────────────────────────
+  it('trace: navTrace.value === nav, unitPriceTrace.value === rsp', () => {
+    const cashflows = Array.from({ length: 14 }, (_, i) => makeCF(2024, i + 1, 100_000))
+    const result = calcNAVTimeSeries(
+      [makeCashRoll(2024, 1, 500_000)],
+      [{ exitCapRate: 0.10, cashflows, propertyName: 'A' }],
+      [],
+      1000,
+    )
+    const row = result[0]!
+    expect(row.navTrace?.value).toBeCloseTo(row.nav, 0)
+    expect(row.unitPriceTrace?.value).toBeCloseTo(row.rsp, 6)
+  })
+
+  it('trace: propertyValues[i].valueTrace раскладывает стоимость объекта', () => {
+    const cashflows = Array.from({ length: 14 }, (_, i) => makeCF(2024, i + 1, 100_000))
+    const result = calcNAVTimeSeries(
+      [makeCashRoll(2024, 1, 0)],
+      [{ exitCapRate: 0.10, cashflows, propertyName: 'A' }],
+      [],
+      1000,
+    )
+    const pv = result[0]!.propertyValues![0]!
+    expect(pv.propertyName).toBe('A')
+    expect(pv.valueTrace?.value).toBeCloseTo(pv.value, 0)
+    expect(pv.valueTrace?.formula).toContain('NOI')
+    expect(pv.valueTrace?.formula).toContain('exitCapRate')
+  })
+
+  it('trace: unitPriceTrace раскрывается до СЧА → стоимости объектов (рекурсивно)', () => {
+    const cashflows = Array.from({ length: 14 }, (_, i) => makeCF(2024, i + 1, 100_000))
+    const result = calcNAVTimeSeries(
+      [makeCashRoll(2024, 1, 0)],
+      [{ exitCapRate: 0.10, cashflows, propertyName: 'A' }],
+      [],
+      1000,
+    )
+    const upTrace = result[0]!.unitPriceTrace!
+    const navOperand = upTrace.operands.find(o => o.label === 'СЧА')!
+    expect(navOperand.trace?.value).toBeCloseTo(result[0]!.nav, 0)
+    // Из navTrace — стоимости объектов с под-trace
+    const objOperand = navOperand.trace!.operands.find(o => o.label.startsWith('Стоимость:'))!
+    expect(objOperand.trace?.value).toBeCloseTo(result[0]!.propertyValues![0]!.value, 0)
   })
 
   it('два объекта — стоимости суммируются', () => {

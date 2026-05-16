@@ -475,6 +475,47 @@ describe('calcFundCashRoll', () => {
     expect(result[11]!.disposalInflow).toBeCloseTo(12_000_000, 0)
   })
 
+  // ─── V4.5.8: trace инварианты ─────────────────────────────────────────────────
+  it('trace инварианты: каждое *Trace.value соответствует значению поля', () => {
+    const fund = makeMinimalFund({ upfrontFeeRate: 0.02, managementFeeRate: 0.012 })
+    const cashflows = Array.from({ length: 16 }, (_, i) => makeCF(2024, i + 1, 100_000))
+    const prop = makePropCF({
+      cashflows,
+      purchaseDate: new Date(2024, 0, 1),
+      saleDate: new Date(2024, 2, 1),
+      acquisitionPrice: 5_000_000,
+      exitCapRate: 0.10,
+    })
+    const result = calcFundCashRoll(fund, [prop], [])
+
+    for (const r of result) {
+      expect(r.noiInflowTrace?.value).toBeCloseTo(r.noiInflow, 0)
+      expect(r.disposalInflowTrace?.value).toBeCloseTo(r.disposalInflow, 0)
+      expect(r.acquisitionOutflowTrace?.value).toBeCloseTo(r.acquisitionOutflow, 0)
+      expect(r.upfrontFeeOutflowTrace?.value).toBeCloseTo(r.upfrontFeeOutflow, 0)
+      expect(r.managementFeeOutflowTrace?.value).toBeCloseTo(r.managementFeeOutflow, 0)
+      expect(r.fundExpensesOutflowTrace?.value).toBeCloseTo(r.fundExpensesOutflow, 0)
+      expect(r.distributionOutflowTrace?.value).toBeCloseTo(r.distributionOutflow, 0)
+      expect(r.redemptionOutflowTrace?.value).toBeCloseTo(r.redemptionOutflow, 0)
+      expect(r.emissionInflowTrace?.value).toBeCloseTo(r.emissionInflow, 0)
+      expect(r.investorCashflowTrace?.value).toBeCloseTo(r.investorCashflow, 0)
+    }
+  })
+
+  it('investorCashflowTrace в t=0 = −(emission+upfront), под-traces раскрываются', () => {
+    const fund = makeMinimalFund({ upfrontFeeRate: 0.02 })
+    const cashflows = Array.from({ length: 16 }, (_, i) => makeCF(2024, i + 1, 0))
+    const result = calcFundCashRoll(fund, [makePropCF({ cashflows })], [])
+
+    const r0 = result[0]!
+    expect(r0.investorCashflow).toBeLessThan(0)
+    const trace = r0.investorCashflowTrace!
+    expect(trace.formula).toContain('emissionInflow')
+    expect(trace.operands).toHaveLength(2)
+    expect(trace.operands[0]!.trace?.value).toBeCloseTo(r0.emissionInflow, 0)
+    expect(trace.operands[1]!.trace?.value).toBeCloseTo(r0.upfrontFeeOutflow, 0)
+  })
+
   // ─── V4.2.4: redemptionOutflow в последнем периоде ────────────────────────────
   it('redemptionOutflow в endPeriod = весь cashEnd_before_redemption, после redemption cashEnd=0', () => {
     // Эмиссия 10M, NOI=0, без выплат и комиссий, фонд Jan–Mar 2024 (3 месяца, ANNUAL).

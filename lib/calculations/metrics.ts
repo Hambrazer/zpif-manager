@@ -5,6 +5,8 @@ import type {
   LeaseInput,
   DebtInput,
   ReferencePoint,
+  Trace,
+  TraceOperand,
 } from '../types'
 import { calcDebtSchedule } from './amortization'
 import { calcIRR } from './dcf'
@@ -172,18 +174,46 @@ export function calcNAVPerUnit(nav: number, totalUnits: number): number {
  * IRR помесячный → годовой = (1 + r)^12 − 1.
  * Если NaN (нет смены знака) — возвращает 0.
  */
-export function calcInvestorIRR(cashRoll: MonthlyCashRoll[]): number {
-  if (cashRoll.length === 0) return 0
+/**
+ * V4.5.6: возвращает { value, trace }.
+ *   value — годовой IRR инвестора, 0 если поток без смены знака.
+ *   trace — раскладка с операндами по периодам (весь поток), формула аннуализации.
+ *
+ * Поток инвестора уже посчитан в calcFundCashRoll и хранится в r.investorCashflow
+ * (V4.5.3) — здесь только аннуализируем и собираем trace.
+ */
+export function calcInvestorIRR(cashRoll: MonthlyCashRoll[]): { value: number; trace: Trace } {
+  if (cashRoll.length === 0) {
+    return {
+      value: 0,
+      trace: { formula: 'Пустой поток', operands: [], value: 0 },
+    }
+  }
 
-  const lastIdx = cashRoll.length - 1
-  const flows = cashRoll.map((r, i) => {
-    if (i === 0)       return -(r.emissionInflow + r.upfrontFeeOutflow)
-    if (i === lastIdx) return r.distributionOutflow + r.redemptionOutflow
-    return r.distributionOutflow
-  })
+  const flows = cashRoll.map(r => r.investorCashflow)
+  const irrResult = calcIRR(flows)
+  const irrMonthly = irrResult.value
+  const annual = isNaN(irrMonthly) ? 0 : Math.pow(1 + irrMonthly, MONTHS_PER_YEAR) - 1
 
-  const irrMonthly = calcIRR(flows)
-  return isNaN(irrMonthly) ? 0 : Math.pow(1 + irrMonthly, MONTHS_PER_YEAR) - 1
+  const operands: TraceOperand[] = cashRoll.map((r, i) => ({
+    label: `t=${i} (${r.period.year}-${String(r.period.month).padStart(2, '0')}): поток инвестора`,
+    value: r.investorCashflow,
+    unit: '₽',
+    ...(r.investorCashflowTrace ? { trace: r.investorCashflowTrace } : {}),
+  }))
+
+  return {
+    value: annual,
+    trace: {
+      formula: '(1 + IRR_monthly)^12 − 1, где IRR_monthly из потока инвестора',
+      operands: [
+        { label: 'IRR помесячный', value: irrMonthly, unit: '%', trace: irrResult.trace },
+        { label: 'Месяцев в году', value: MONTHS_PER_YEAR },
+        ...operands,
+      ],
+      value: annual,
+    },
+  }
 }
 
 /**

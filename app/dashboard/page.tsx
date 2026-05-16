@@ -164,11 +164,14 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         exitCapRate: property.exitCapRate,
         cashflows,
         ownershipPct: fp.ownershipPct,
+        propertyName: property.name,                 // V4.5.7
       })
       propertyValueInputs.push({
         exitCapRate: property.exitCapRate,
         cashflows,
         ownershipPct: fp.ownershipPct,
+        propertyId: property.id,                     // V4.5.7
+        propertyName: property.name,
       })
 
       totalRentableArea += property.rentableArea
@@ -237,7 +240,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     let irr: number | null = null
     if (refIdx !== -1) {
       const sliced = cashRoll.slice(0, refIdx + 1)
-      const irrAnnual = sliced.length > 0 ? calcInvestorIRR(sliced) : 0
+      const irrAnnual = sliced.length > 0 ? calcInvestorIRR(sliced).value : 0
       irr = irrAnnual === 0 ? null : irrAnnual
     }
 

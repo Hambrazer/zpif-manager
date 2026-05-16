@@ -265,6 +265,7 @@ function makeRoll(
     debtServiceOutflow: 0,
     distributionOutflow: 0,
     redemptionOutflow: 0,
+    investorCashflow: 0,
     cashEnd: 0,
     ...overrides,
   }
@@ -282,53 +283,82 @@ describe('calcInvestorIRR', () => {
     return out
   }
 
+  // V4.5.3: calcInvestorIRR теперь читает r.investorCashflow напрямую — это поле
+  // должен заполнить calcFundCashRoll. В unit-тестах задаём его явно.
   it('emission 100k в t=0, redemption 110k через 12 интервалов → IRR≈10% годовых', () => {
     const roll = makeRange(12) // 13 периодов, 12 интервалов
-    roll[0] = makeRoll(2026, 1, { emissionInflow: 100_000 })
-    roll[12] = makeRoll(2027, 1, { redemptionOutflow: 110_000 })
-    expect(calcInvestorIRR(roll)).toBeCloseTo(0.10, 3)
+    roll[0]  = makeRoll(2026, 1, { emissionInflow: 100_000, investorCashflow: -100_000 })
+    roll[12] = makeRoll(2027, 1, { redemptionOutflow: 110_000, investorCashflow:  110_000 })
+    expect(calcInvestorIRR(roll).value).toBeCloseTo(0.10, 3)
   })
 
   it('upfront fee увеличивает отток t=0 и снижает IRR', () => {
     const noFee = makeRange(12)
-    noFee[0] = makeRoll(2026, 1, { emissionInflow: 100_000 })
-    noFee[12] = makeRoll(2027, 1, { redemptionOutflow: 110_000 })
+    noFee[0]  = makeRoll(2026, 1, { emissionInflow: 100_000, investorCashflow: -100_000 })
+    noFee[12] = makeRoll(2027, 1, { redemptionOutflow: 110_000, investorCashflow: 110_000 })
 
     const withFee = makeRange(12)
-    withFee[0] = makeRoll(2026, 1, { emissionInflow: 100_000, upfrontFeeOutflow: 5_000 })
-    withFee[12] = makeRoll(2027, 1, { redemptionOutflow: 110_000 })
+    withFee[0]  = makeRoll(2026, 1, { emissionInflow: 100_000, upfrontFeeOutflow: 5_000, investorCashflow: -105_000 })
+    withFee[12] = makeRoll(2027, 1, { redemptionOutflow: 110_000, investorCashflow: 110_000 })
 
-    expect(calcInvestorIRR(withFee)).toBeLessThan(calcInvestorIRR(noFee))
+    expect(calcInvestorIRR(withFee).value).toBeLessThan(calcInvestorIRR(noFee).value)
   })
 
   it('emission и redemption одинаковые, distributions=0 → IRR≈0', () => {
     const roll = makeRange(12)
-    roll[0] = makeRoll(2026, 1, { emissionInflow: 100_000 })
-    roll[12] = makeRoll(2027, 1, { redemptionOutflow: 100_000 })
-    expect(calcInvestorIRR(roll)).toBeCloseTo(0, 5)
+    roll[0]  = makeRoll(2026, 1, { emissionInflow: 100_000, investorCashflow: -100_000 })
+    roll[12] = makeRoll(2027, 1, { redemptionOutflow: 100_000, investorCashflow: 100_000 })
+    expect(calcInvestorIRR(roll).value).toBeCloseTo(0, 5)
   })
 
   it('ежемесячные distributions суммарно равны emission → IRR ≥ 0', () => {
     const roll = makeRange(12)
-    roll[0] = makeRoll(2026, 1, { emissionInflow: 120_000 })
+    roll[0] = makeRoll(2026, 1, { emissionInflow: 120_000, investorCashflow: -120_000 })
     for (let i = 1; i <= 12; i++) {
       const period = roll[i]!.period
-      roll[i] = makeRoll(period.year, period.month, { distributionOutflow: 10_000 })
+      roll[i] = makeRoll(period.year, period.month, {
+        distributionOutflow: 10_000,
+        investorCashflow:    10_000,
+      })
     }
-    expect(calcInvestorIRR(roll)).toBeGreaterThanOrEqual(0)
+    expect(calcInvestorIRR(roll).value).toBeGreaterThanOrEqual(0)
   })
 
   it('пустой cashRoll → 0', () => {
-    expect(calcInvestorIRR([])).toBe(0)
+    expect(calcInvestorIRR([]).value).toBe(0)
   })
 
   it('единственный период → 0 (нет смены знака для IRR)', () => {
     const roll: MonthlyCashRoll[] = [
-      makeRoll(2026, 1, { emissionInflow: 100_000, redemptionOutflow: 100_000 }),
+      makeRoll(2026, 1, { emissionInflow: 100_000, redemptionOutflow: 100_000, investorCashflow: -100_000 }),
     ]
-    // При одном периоде ветка t=0 срабатывает первой и возвращает −(emission+upfront) → −100_000.
+    // При одном периоде поток инвестора = −emission (как в calcFundCashRoll для t=0).
     // IRR не определён — нет смены знака.
-    expect(calcInvestorIRR(roll)).toBe(0)
+    expect(calcInvestorIRR(roll).value).toBe(0)
+  })
+
+  // ─── V4.5.8: trace инварианты ────────────────────────────────────────────────
+  it('trace: возвращает раскладку с операндами по каждому периоду', () => {
+    const roll = makeRange(12)
+    roll[0]  = makeRoll(2026, 1, { emissionInflow: 100_000, investorCashflow: -100_000 })
+    roll[12] = makeRoll(2027, 1, { redemptionOutflow: 110_000, investorCashflow: 110_000 })
+
+    const { value, trace } = calcInvestorIRR(roll)
+    expect(trace.value).toBe(value)
+    expect(trace.formula).toContain('IRR_monthly')
+
+    // Операнды: IRR_monthly + Месяцев в году + 13 периодов
+    const periodOperands = trace.operands.filter(o => o.label.startsWith('t='))
+    expect(periodOperands).toHaveLength(13)
+    expect(periodOperands[0]!.value).toBe(-100_000)
+    expect(periodOperands[12]!.value).toBe(110_000)
+  })
+
+  it('trace: пустой cashRoll → "Пустой поток"', () => {
+    const { value, trace } = calcInvestorIRR([])
+    expect(value).toBe(0)
+    expect(trace.formula).toBe('Пустой поток')
+    expect(trace.operands).toEqual([])
   })
 })
 

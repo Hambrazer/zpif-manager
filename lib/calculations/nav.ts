@@ -4,6 +4,8 @@ import type {
   NAVResult,
   MonthlyPeriod,
   DebtInput,
+  Trace,
+  TraceOperand,
 } from '../types'
 import { calcDebtSchedule } from './amortization'
 
@@ -15,11 +17,14 @@ function periodKey(p: MonthlyPeriod): string {
 
 /** Минимальный набор данных объекта для расчёта стоимости в СЧА.
  *  V3.8.5: ownershipPct — доля владения фонда в объекте (0; 100]. Если не задана,
- *  считается 100% (обратная совместимость). */
+ *  считается 100% (обратная совместимость).
+ *  V4.5.4: propertyId/propertyName — для меток в раскладке стоимости объекта. */
 export type PropertyValueInput = {
   exitCapRate: number | null
   cashflows: MonthlyCashflow[]
   ownershipPct?: number
+  propertyId?: string
+  propertyName?: string
 }
 
 // ─── Стоимость объекта ────────────────────────────────────────────────────────
@@ -155,17 +160,71 @@ export function calcNAVTimeSeries(
     const debtBalance = debtBalanceMap.get(k) ?? 0
 
     let propertyValue = 0
-    for (const prop of properties) {
+    const propertyValues: NonNullable<NAVResult['propertyValues']> = []
+    properties.forEach((prop, idx) => {
       const nextYearNOI = calcNextYearNOI(prop.cashflows, period)
-      // V3.8.5: стоимость объекта в СЧА масштабируется на долю владения фонда.
       const share = (prop.ownershipPct ?? 100) / 100
-      propertyValue += calcPropertyValue(prop, nextYearNOI) * share
-    }
+      const value = calcPropertyValue(prop, nextYearNOI) * share
+      propertyValue += value
+
+      // V4.5.4: trace стоимости объекта = (NOI₁₂ / exitCapRate) × ownership/100
+      const valueTrace: Trace = {
+        formula: '(NOI следующих 12 мес / exitCapRate) × ownership/100',
+        operands: [
+          { label: 'NOI следующих 12 мес', value: nextYearNOI,           unit: '₽' },
+          { label: 'Exit Cap Rate',        value: prop.exitCapRate ?? 0, unit: '%' },
+          { label: 'Доля владения',         value: prop.ownershipPct ?? 100, unit: '%' },
+        ],
+        value,
+      }
+      propertyValues.push({
+        propertyName: prop.propertyName ?? `Объект ${idx + 1}`,
+        value,
+        ownershipPct: prop.ownershipPct ?? 100,
+        valueTrace,
+        ...(prop.propertyId ? { propertyId: prop.propertyId } : {}),
+      })
+    })
 
     const totalAssets = cash + propertyValue
     const nav = totalAssets - debtBalance
     const rsp = calcRSP(nav, totalUnits)
 
-    return { period, propertyValue, cash, totalAssets, debtBalance, nav, rsp }
+    // V4.5.4: trace СЧА — операнды per-object с под-trace + кэш + долг.
+    const navOperands: TraceOperand[] = propertyValues.map(pv => ({
+      label: `Стоимость: ${pv.propertyName}`,
+      value: pv.value,
+      unit: '₽',
+      ...(pv.valueTrace ? { trace: pv.valueTrace } : {}),
+    }))
+    navOperands.push({ label: 'Кэш фонда',     value: cash,        unit: '₽' })
+    navOperands.push({ label: 'Остаток долга', value: debtBalance, unit: '₽' })
+    const navTrace: Trace = {
+      formula: 'Σ стоимостей объектов + кэш − остаток долга',
+      operands: navOperands,
+      value: nav,
+    }
+
+    const unitPriceTrace: Trace = {
+      formula: 'СЧА / количество паёв',
+      operands: [
+        { label: 'СЧА',              value: nav,        unit: '₽', trace: navTrace },
+        { label: 'Количество паёв',  value: totalUnits },
+      ],
+      value: rsp,
+    }
+
+    return {
+      period,
+      propertyValue,
+      cash,
+      totalAssets,
+      debtBalance,
+      nav,
+      rsp,
+      propertyValues,
+      navTrace,
+      unitPriceTrace,
+    }
   })
 }

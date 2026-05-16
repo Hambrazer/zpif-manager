@@ -469,3 +469,53 @@ describe('горизонт CF на projectionYears (V4.2.1)', () => {
     expect(result[35]!.totalIncome).toBeGreaterThan(0)
   })
 })
+
+// ─── V4.5.8: trace инварианты для calcPropertyCashflow ────────────────────────
+
+describe('trace в calcPropertyCashflow (V4.5.2)', () => {
+  const propWithCosts = {
+    rentableArea: 500,
+    opexRate: 1_200,
+    maintenanceRate: 600,
+    cadastralValue: 100_000_000,
+    landCadastralValue: 20_000_000,
+    propertyTaxRate: 0.022,
+    landTaxRate: 0.003,
+    cpiRate: 0.07,
+  }
+
+  const [row] = calcPropertyCashflow(propWithCosts, [baseLease], [], [jan2024])!
+
+  it('каждое trace-поле существует и trace.value === значение поля', () => {
+    expect(row!.opexTrace?.value).toBeCloseTo(row!.opex, 6)
+    expect(row!.maintenanceTrace?.value).toBeCloseTo(row!.maintenance, 6)
+    expect(row!.propertyTaxTrace?.value).toBeCloseTo(row!.propertyTax, 6)
+    expect(row!.landTaxTrace?.value).toBeCloseTo(row!.landTax, 6)
+    expect(row!.capexTrace?.value).toBeCloseTo(row!.capex, 6)
+    expect(row!.noiTrace?.value).toBeCloseTo(row!.noi, 6)
+    expect(row!.fcfTrace?.value).toBeCloseTo(row!.fcf, 6)
+  })
+
+  it('tenants[].rentIncomeTrace и opexReimbursementTrace соответствуют значениям', () => {
+    const tenant = row!.tenants[0]!
+    expect(tenant.rentIncomeTrace?.value).toBeCloseTo(tenant.rentIncome, 6)
+    expect(tenant.opexReimbursementTrace?.value).toBeCloseTo(tenant.opexReimbursement, 6)
+  })
+
+  it('noiTrace раскрывается до листьев через под-traces расходных статей', () => {
+    const noi = row!.noiTrace!
+    expect(noi.formula).toContain('totalIncome')
+    // OPEX/налоги/эксплуатация — операнды с под-trace
+    const opexOperand = noi.operands.find(o => o.label === 'OPEX')!
+    expect(opexOperand.trace?.value).toBeCloseTo(row!.opex, 6)
+    expect(opexOperand.trace?.formula).toContain('opexRate')
+  })
+
+  it('fcfTrace = NOI − CAPEX, оба операнда раскрываемы', () => {
+    const fcf = row!.fcfTrace!
+    expect(fcf.formula).toContain('NOI')
+    expect(fcf.operands).toHaveLength(2)
+    expect(fcf.operands[0]!.trace?.value).toBeCloseTo(row!.noi, 6)
+    expect(fcf.operands[1]!.trace?.value).toBeCloseTo(row!.capex, 6)
+  })
+})

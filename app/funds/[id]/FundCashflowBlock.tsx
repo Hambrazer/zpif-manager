@@ -100,7 +100,7 @@ function computeMetrics(
   let irr: number | null = null
   if (refIdxCR !== -1) {
     const sliced = cashRoll.slice(0, refIdxCR + 1)
-    const irrAnnual = sliced.length > 0 ? calcInvestorIRR(sliced) : 0
+    const irrAnnual = sliced.length > 0 ? calcInvestorIRR(sliced).value : 0
     irr = irrAnnual === 0 ? null : irrAnnual
   }
 

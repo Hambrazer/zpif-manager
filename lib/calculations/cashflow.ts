@@ -5,6 +5,8 @@ import type {
   MonthlyPeriod,
   MonthlyCashflow,
   TenantCashflow,
+  Trace,
+  TraceOperand,
 } from '../types'
 import { calcIndexedRent, calcStepRent } from './indexation'
 
@@ -107,6 +109,41 @@ export function calcPropertyCashflow(
   const propertyTax = ((property.cadastralValue ?? 0) * property.propertyTaxRate) / 12
   const landTax = ((property.landCadastralValue ?? 0) * property.landTaxRate) / 12
 
+  // V4.5.2: trace фиксированных статей — одинаков для всех периодов, поэтому
+  // вычисляем один раз вне цикла.
+  const opexTrace: Trace = {
+    formula: 'opexRate × rentableArea / 12',
+    operands: [
+      { label: 'Ставка OPEX',     value: property.opexRate,     unit: '₽' },
+      { label: 'Арендуемая площадь', value: property.rentableArea, unit: 'м²' },
+    ],
+    value: opex,
+  }
+  const maintenanceTrace: Trace = {
+    formula: 'maintenanceRate × rentableArea / 12',
+    operands: [
+      { label: 'Ставка эксплуатации', value: property.maintenanceRate, unit: '₽' },
+      { label: 'Арендуемая площадь',  value: property.rentableArea,    unit: 'м²' },
+    ],
+    value: maintenance,
+  }
+  const propertyTaxTrace: Trace = {
+    formula: 'cadastralValue × propertyTaxRate / 12',
+    operands: [
+      { label: 'Кадастровая стоимость здания', value: property.cadastralValue ?? 0, unit: '₽' },
+      { label: 'Ставка налога на имущество',   value: property.propertyTaxRate,     unit: '%' },
+    ],
+    value: propertyTax,
+  }
+  const landTaxTrace: Trace = {
+    formula: 'landCadastralValue × landTaxRate / 12',
+    operands: [
+      { label: 'Кадастровая стоимость ЗУ', value: property.landCadastralValue ?? 0, unit: '₽' },
+      { label: 'Ставка налога на ЗУ',      value: property.landTaxRate,             unit: '%' },
+    ],
+    value: landTax,
+  }
+
   return periods.map((period) => {
     const key = periodKey(period)
     const periodEnd = lastDayOfMonth(period)
@@ -150,13 +187,33 @@ export function calcPropertyCashflow(
         tenantName: lease.tenantName,
         rentIncome,
         opexReimbursement,
+        rentIncomeTrace: {
+          formula: 'area × ставка_аренды_в_периоде / 12',
+          operands: [
+            { label: 'Площадь',                 value: lease.area,    unit: 'м²' },
+            { label: 'Ставка аренды в периоде', value: indexedRent,   unit: '₽' },
+          ],
+          value: rentIncome,
+        },
+        opexReimbursementTrace: {
+          formula: 'area × ставка_возмещения_в_периоде / 12',
+          operands: [
+            { label: 'Площадь',                     value: lease.area,        unit: 'м²' },
+            { label: 'Ставка возмещения OPEX',      value: indexedOpexReimb,  unit: '₽' },
+          ],
+          value: opexReimbursement,
+        },
       })
     }
 
     const totalIncome = rentTotal + opexReimbursementTotal
     const noi = totalIncome - opex - propertyTax - landTax - maintenance
 
-    let capexAmount = capexMap.get(key) ?? 0
+    // CAPEX = Σ разовых позиций в этом месяце + индексированный резерв (если есть).
+    // Trace показывает обе компоненты как отдельные операнды.
+    const capexLumpSum = capexMap.get(key) ?? 0
+    let capexReserveAmount = 0
+    let capexReserveOperand: TraceOperand | null = null
     if (capexReserve && periodEnd >= capexReserve.startDate) {
       const indexedReserveRate = calcIndexedRent(
         capexReserve.ratePerSqm,
@@ -166,10 +223,56 @@ export function calcPropertyCashflow(
         capexReserve.indexationRate,
         cpiValues
       )
-      capexAmount += (property.rentableArea * indexedReserveRate) / 12
+      capexReserveAmount = (property.rentableArea * indexedReserveRate) / 12
+      capexReserveOperand = {
+        label: 'Резерв CAPEX (индексированная ставка × площадь / 12)',
+        value: capexReserveAmount,
+        unit: '₽',
+        trace: {
+          formula: 'rentableArea × indexedReserveRate / 12',
+          operands: [
+            { label: 'Площадь',                       value: property.rentableArea, unit: 'м²' },
+            { label: 'Индексированная ставка резерва', value: indexedReserveRate,    unit: '₽' },
+          ],
+          value: capexReserveAmount,
+        },
+      }
+    }
+    const capexAmount = capexLumpSum + capexReserveAmount
+
+    const capexOperands: TraceOperand[] = [
+      { label: 'Разовые CAPEX в этом месяце', value: capexLumpSum, unit: '₽' },
+    ]
+    if (capexReserveOperand) capexOperands.push(capexReserveOperand)
+    const capexTrace: Trace = {
+      formula: 'Σ разовых CAPEX + резерв CAPEX',
+      operands: capexOperands,
+      value: capexAmount,
     }
 
     const fcf = noi - capexAmount
+
+    // NOI и FCF — операнды с подtrace на статьи.
+    const noiTrace: Trace = {
+      formula: 'totalIncome − opex − propertyTax − landTax − maintenance',
+      operands: [
+        { label: 'Аренда (Σ по арендаторам)',  value: rentTotal,              unit: '₽' },
+        { label: 'Возмещение OPEX (Σ)',        value: opexReimbursementTotal, unit: '₽' },
+        { label: 'OPEX',                       value: opex,        unit: '₽', trace: opexTrace },
+        { label: 'Налог на имущество',         value: propertyTax, unit: '₽', trace: propertyTaxTrace },
+        { label: 'Налог на ЗУ',                value: landTax,     unit: '₽', trace: landTaxTrace },
+        { label: 'Эксплуатация',               value: maintenance, unit: '₽', trace: maintenanceTrace },
+      ],
+      value: noi,
+    }
+    const fcfTrace: Trace = {
+      formula: 'NOI − CAPEX',
+      operands: [
+        { label: 'NOI',   value: noi,         unit: '₽', trace: noiTrace },
+        { label: 'CAPEX', value: capexAmount, unit: '₽', trace: capexTrace },
+      ],
+      value: fcf,
+    }
 
     return {
       period,
@@ -182,6 +285,13 @@ export function calcPropertyCashflow(
       capex: capexAmount,
       noi,
       fcf,
+      noiTrace,
+      fcfTrace,
+      opexTrace,
+      maintenanceTrace,
+      propertyTaxTrace,
+      landTaxTrace,
+      capexTrace,
       tenants,
     }
   })

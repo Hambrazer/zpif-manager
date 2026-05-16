@@ -48,10 +48,9 @@ function fundFCF(r: MonthlyCashRoll): number {
   return operationalCF(r) + investingCF(r)
 }
 
-function investorCF(r: MonthlyCashRoll, idx: number, all: readonly MonthlyCashRoll[]): number {
-  if (idx === 0)               return -(r.emissionInflow + r.upfrontFeeOutflow)
-  if (idx === all.length - 1)  return r.distributionOutflow + r.redemptionOutflow
-  return r.distributionOutflow
+function investorCF(r: MonthlyCashRoll): number {
+  // V4.5.3: поле уже посчитано в calcFundCashRoll вместе с trace.
+  return r.investorCashflow
 }
 
 const FUND_ROWS: readonly RowSpec<MonthlyCashRoll>[] = [

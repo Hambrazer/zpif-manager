@@ -4,7 +4,11 @@ import type { MonthlyCashRoll } from '@/lib/types'
 
 // ─── Типы строк ───────────────────────────────────────────────────────────────
 
-type NumericKey = Exclude<keyof MonthlyCashRoll, 'period'>
+// V4.5.3: только числовые поля (исключаем period и опциональные *Trace).
+// `-?` снимает optional, чтобы условный тип не схлопывался в never.
+type NumericKey = {
+  [K in keyof MonthlyCashRoll]-?: MonthlyCashRoll[K] extends number ? K : never
+}[keyof MonthlyCashRoll]
 
 type DataRow = {
   type: 'data'

@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/utils/auth'
 import { calcPropertyCashflow, type PropertyExpenseInput } from '@/lib/calculations/cashflow'
 import { calcDCF } from '@/lib/calculations/dcf'
-import type { LeaseInput, CapexInput, CapexReserveInput, MonthlyPeriod, IndexationType } from '@/lib/types'
+import type { LeaseInput, CapexInput, CapexReserveInput, MonthlyPeriod, IndexationType, Trace } from '@/lib/types'
 
 export type DCFSummary = {
   npv: number
@@ -10,6 +10,11 @@ export type DCFSummary = {
   terminalValue: number
   discountRate: number  // WACC в долях
   projectionYears: number
+  // V4.5.7 — раскладки + поток для отображения в CalcDetails (V4.9)
+  npvTrace?: Trace
+  irrTrace?: Trace
+  terminalValueTrace?: Trace
+  irrFlow?: number[]
 }
 
 type Params = { params: { id: string } }
@@ -106,6 +111,10 @@ export async function GET(req: Request, { params }: Params) {
       terminalValue:   dcf.terminalValue,
       discountRate:    property.wacc,
       projectionYears,
+      ...(dcf.npvTrace          ? { npvTrace:          dcf.npvTrace          } : {}),
+      ...(dcf.irrTrace          ? { irrTrace:          dcf.irrTrace          } : {}),
+      ...(dcf.terminalValueTrace ? { terminalValueTrace: dcf.terminalValueTrace } : {}),
+      ...(dcf.irrFlow           ? { irrFlow:           dcf.irrFlow           } : {}),
     }
 
     return Response.json({ data: summary })

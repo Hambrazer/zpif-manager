@@ -5,6 +5,8 @@ import type {
   MonthlyPeriod,
   DistributionPeriodicity,
   DebtInput,
+  Trace,
+  TraceOperand,
 } from '../types'
 import { calcDebtSchedule } from './amortization'
 
@@ -19,6 +21,8 @@ export type PropertyCFInput = {
   exitCapRate: number | null
   cashflows: MonthlyCashflow[]
   ownershipPct?: number
+  // V4.5.3 — для красивых меток в trace. Если не задан — fallback `Объект N`.
+  propertyName?: string
 }
 
 function periodKey(p: MonthlyPeriod): string {
@@ -226,6 +230,10 @@ export function calcFundCashRoll(
   const result: MonthlyCashRoll[] = []
   let cashBegin = 0
 
+  // V4.5.3: helper для подписи объекта в trace-операндах.
+  const propLabel = (prop: PropertyCFInput, idx: number): string =>
+    prop.propertyName ?? `Объект ${idx + 1}`
+
   for (const period of periods) {
     const k = periodKey(period)
     const isStartPeriod = isSamePeriod(fund.startDate, period)
@@ -233,29 +241,85 @@ export function calcFundCashRoll(
 
     // ─── Притоки ────────────────────────────────────────────────────────────
     const emissionInflow = isStartPeriod ? fund.totalEmission : 0
+    const emissionInflowTrace: Trace = {
+      formula: isStartPeriod ? 'fund.totalEmission (t=0)' : '0 вне t=0',
+      operands: isStartPeriod
+        ? [{ label: 'Объём эмиссии', value: fund.totalEmission, unit: '₽' }]
+        : [],
+      value: emissionInflow,
+    }
 
     let noiInflow = 0
-    for (const prop of propertyCashflows) {
-      if (!isPropertyActiveInPeriod(prop, period)) continue
+    const noiOperands: TraceOperand[] = []
+    propertyCashflows.forEach((prop, idx) => {
+      if (!isPropertyActiveInPeriod(prop, period)) return
       const cf = prop.cashflows.find(c => c.period.year === period.year && c.period.month === period.month)
-      noiInflow += (cf?.noi ?? 0) * ownershipShare(prop)
+      const propNoi = (cf?.noi ?? 0) * ownershipShare(prop)
+      noiInflow += propNoi
+      noiOperands.push({
+        label: `${propLabel(prop, idx)}: NOI × доля владения`,
+        value: propNoi,
+        unit: '₽',
+        ...(cf?.noiTrace ? { trace: cf.noiTrace } : {}),
+      })
+    })
+    const noiInflowTrace: Trace = {
+      formula: 'Σ NOI_объекта × ownership/100 (для активных в периоде)',
+      operands: noiOperands,
+      value: noiInflow,
     }
 
     let disposalInflow = 0
-    for (const prop of propertyCashflows) {
+    const disposalOperands: TraceOperand[] = []
+    propertyCashflows.forEach((prop, idx) => {
       if (prop.saleDate && isSamePeriod(prop.saleDate, period)) {
-        disposalInflow += getSaleProceeds(prop)
+        const proceeds = getSaleProceeds(prop)
+        disposalInflow += proceeds
+        disposalOperands.push({
+          label: `${propLabel(prop, idx)}: NOI₁₂_forward / exitCapRate × ownership`,
+          value: proceeds,
+          unit: '₽',
+        })
       }
+    })
+    const disposalInflowTrace: Trace = {
+      formula: 'Σ (NOI следующих 12 мес / exitCapRate × ownership/100) для проданных в периоде',
+      operands: disposalOperands,
+      value: disposalInflow,
     }
 
     // ─── Оттоки ─────────────────────────────────────────────────────────────
     const upfrontFeeOutflow = isStartPeriod ? upfrontFee : 0
+    const upfrontFeeOutflowTrace: Trace = {
+      formula: isStartPeriod
+        ? 'upfrontFeeRate × totalEmission / (1 − upfrontFeeRate)'
+        : '0 вне t=0',
+      operands: isStartPeriod
+        ? [
+            { label: 'Ставка upfront fee', value: fund.upfrontFeeRate,  unit: '%' },
+            { label: 'Объём эмиссии',      value: fund.totalEmission,   unit: '₽' },
+          ]
+        : [],
+      value: upfrontFeeOutflow,
+    }
 
     let acquisitionOutflow = 0
-    for (const prop of propertyCashflows) {
+    const acquisitionOperands: TraceOperand[] = []
+    propertyCashflows.forEach((prop, idx) => {
       if (prop.purchaseDate && isSamePeriod(prop.purchaseDate, period)) {
-        acquisitionOutflow += (prop.acquisitionPrice ?? 0) * ownershipShare(prop)
+        const amount = (prop.acquisitionPrice ?? 0) * ownershipShare(prop)
+        acquisitionOutflow += amount
+        acquisitionOperands.push({
+          label: `${propLabel(prop, idx)}: acquisitionPrice × ownership/100`,
+          value: amount,
+          unit: '₽',
+        })
       }
+    })
+    const acquisitionOutflowTrace: Trace = {
+      formula: 'Σ acquisitionPrice × ownership/100 (для купленных в периоде)',
+      operands: acquisitionOperands,
+      value: acquisitionOutflow,
     }
 
     const debtServiceOutflow = debtServiceMap.get(k) ?? 0
@@ -271,16 +335,56 @@ export function calcFundCashRoll(
     const navBegin = Math.max(0, cashBegin + propValAtPeriod - debtBalance)
 
     const managementFeeOutflow = calcManagementFee(navBegin, fund.managementFeeRate)
+    const managementFeeOutflowTrace: Trace = {
+      formula: 'navBegin × managementFeeRate / 12',
+      operands: [
+        { label: 'СЧА на начало периода',  value: navBegin,             unit: '₽' },
+        { label: 'Ставка management fee',  value: fund.managementFeeRate, unit: '%' },
+      ],
+      value: managementFeeOutflow,
+    }
     const fundExpensesOutflow = calcFundExpenses(navBegin, fund.fundExpensesRate)
+    const fundExpensesOutflowTrace: Trace = {
+      formula: 'navBegin × fundExpensesRate / 12',
+      operands: [
+        { label: 'СЧА на начало периода', value: navBegin,             unit: '₽' },
+        { label: 'Ставка расходов фонда', value: fund.fundExpensesRate, unit: '%' },
+      ],
+      value: fundExpensesOutflow,
+    }
 
     // FCF до выплат = NOI − комиссии − долг (покупки/продажи не учитываются)
     const fcfBeforeDistribution = noiInflow - managementFeeOutflow - fundExpensesOutflow - debtServiceOutflow
 
     const distributionOutflow = calcDistributions(fcfBeforeDistribution, fund.distributionPeriodicity, period)
+    const distributionOutflowTrace: Trace = {
+      formula: `Выплаты пайщикам (${fund.distributionPeriodicity}): max(0, NOI − комиссии − обслуж.долга) в период выплаты`,
+      operands: [
+        { label: 'NOI фонда',             value: noiInflow,            unit: '₽', trace: noiInflowTrace },
+        { label: 'Management fee',        value: managementFeeOutflow, unit: '₽', trace: managementFeeOutflowTrace },
+        { label: 'Расходы фонда',         value: fundExpensesOutflow,  unit: '₽', trace: fundExpensesOutflowTrace },
+        { label: 'Обслуживание долга',    value: debtServiceOutflow,   unit: '₽' },
+      ],
+      value: distributionOutflow,
+    }
+
     const successFeeOperationalOutflow = calcSuccessFeeOperational(distributionOutflow, fund.successFeeOperational)
+    const successFeeOperationalOutflowTrace: Trace = {
+      formula: 'distributionOutflow × successFeeOperational',
+      operands: [
+        { label: 'Выплаты пайщикам',           value: distributionOutflow,    unit: '₽', trace: distributionOutflowTrace },
+        { label: 'Ставка success fee операц.', value: fund.successFeeOperational, unit: '%' },
+      ],
+      value: successFeeOperationalOutflow,
+    }
 
     // Success fee exit — разово в последнем периоде при росте СЧА
     let successFeeExitOutflow = 0
+    let successFeeExitOutflowTrace: Trace = {
+      formula: '0 вне последнего периода',
+      operands: [],
+      value: 0,
+    }
     if (isEndPeriod && fund.successFeeExit > 0) {
       const cashEndEst = cashBegin
         + emissionInflow + noiInflow + disposalInflow
@@ -289,6 +393,15 @@ export function calcFundCashRoll(
         - debtServiceOutflow - distributionOutflow - successFeeOperationalOutflow
       const navEnd = Math.max(0, cashEndEst + propValAtPeriod - 0) // долг погашен к концу
       successFeeExitOutflow = calcSuccessFeeExit(navEnd, navStart, fund.successFeeExit)
+      successFeeExitOutflowTrace = {
+        formula: 'max(navEnd − navStart, 0) × successFeeExit',
+        operands: [
+          { label: 'СЧА на конец фонда',     value: navEnd,            unit: '₽' },
+          { label: 'СЧА после upfront fee',  value: navStart,          unit: '₽' },
+          { label: 'Ставка success fee выход', value: fund.successFeeExit, unit: '%' },
+        ],
+        value: successFeeExitOutflow,
+      }
     }
 
     // ─── Итог ────────────────────────────────────────────────────────────────
@@ -303,6 +416,53 @@ export function calcFundCashRoll(
     // погашение паёв (redemptionOutflow), и cashEnd обнуляется.
     const redemptionOutflow = isEndPeriod ? Math.max(0, cashEndBeforeRedemption) : 0
     const cashEnd = cashEndBeforeRedemption - redemptionOutflow
+
+    const redemptionOutflowTrace: Trace = {
+      formula: isEndPeriod
+        ? 'cashEnd_before_redemption (весь остаток кэша → пайщикам)'
+        : '0 вне последнего периода',
+      operands: isEndPeriod
+        ? [{ label: 'Кэш на конец до погашения', value: cashEndBeforeRedemption, unit: '₽' }]
+        : [],
+      value: redemptionOutflow,
+    }
+
+    // V4.5.3: поток инвестора:
+    //   t=0       → −(emission + upfront)
+    //   t=last    → distribution + redemption
+    //   иначе     → distribution
+    let investorCashflow: number
+    let investorCashflowTrace: Trace
+    if (isStartPeriod) {
+      investorCashflow = -(emissionInflow + upfrontFeeOutflow)
+      investorCashflowTrace = {
+        formula: '−(emissionInflow + upfrontFeeOutflow)',
+        operands: [
+          { label: 'Эмиссия',     value: emissionInflow,    unit: '₽', trace: emissionInflowTrace },
+          { label: 'Upfront fee', value: upfrontFeeOutflow, unit: '₽', trace: upfrontFeeOutflowTrace },
+        ],
+        value: investorCashflow,
+      }
+    } else if (isEndPeriod) {
+      investorCashflow = distributionOutflow + redemptionOutflow
+      investorCashflowTrace = {
+        formula: 'distributionOutflow + redemptionOutflow',
+        operands: [
+          { label: 'Выплаты пайщикам', value: distributionOutflow, unit: '₽', trace: distributionOutflowTrace },
+          { label: 'Погашение паёв',   value: redemptionOutflow,   unit: '₽', trace: redemptionOutflowTrace },
+        ],
+        value: investorCashflow,
+      }
+    } else {
+      investorCashflow = distributionOutflow
+      investorCashflowTrace = {
+        formula: 'distributionOutflow',
+        operands: [
+          { label: 'Выплаты пайщикам', value: distributionOutflow, unit: '₽', trace: distributionOutflowTrace },
+        ],
+        value: investorCashflow,
+      }
+    }
 
     result.push({
       period,
@@ -319,7 +479,20 @@ export function calcFundCashRoll(
       debtServiceOutflow,
       distributionOutflow,
       redemptionOutflow,
+      investorCashflow,
       cashEnd,
+      noiInflowTrace,
+      emissionInflowTrace,
+      disposalInflowTrace,
+      acquisitionOutflowTrace,
+      upfrontFeeOutflowTrace,
+      managementFeeOutflowTrace,
+      fundExpensesOutflowTrace,
+      successFeeOperationalOutflowTrace,
+      successFeeExitOutflowTrace,
+      distributionOutflowTrace,
+      redemptionOutflowTrace,
+      investorCashflowTrace,
     })
 
     cashBegin = cashEnd

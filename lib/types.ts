@@ -115,6 +115,9 @@ export type TenantCashflow = {
   tenantName: string
   rentIncome: number                            // доход от аренды, ₽/мес
   opexReimbursement: number                     // возмещение OPEX, ₽/мес
+  // V4.5.2 — раскладка по арендатору
+  rentIncomeTrace?: Trace
+  opexReimbursementTrace?: Trace
 }
 
 export type MonthlyCashflow = {
@@ -129,6 +132,14 @@ export type MonthlyCashflow = {
   noi: number                                   // Net Operating Income = totalIncome − расходы
   fcf: number                                   // Free Cash Flow = noi − capex
   tenants: TenantCashflow[]                     // детализация по арендаторам
+  // V4.5.2 — trace ключевых величин (опционально, чтобы не ломать существующий код)
+  noiTrace?: Trace
+  fcfTrace?: Trace
+  opexTrace?: Trace
+  maintenanceTrace?: Trace
+  propertyTaxTrace?: Trace
+  landTaxTrace?: Trace
+  capexTrace?: Trace
 }
 
 // ─── Кэш-ролл фонда ──────────────────────────────────────────────────────────
@@ -151,8 +162,23 @@ export type MonthlyCashRoll = {
   debtServiceOutflow: number
   distributionOutflow: number                   // выплаты пайщикам
   redemptionOutflow: number                     // V4.2.3: погашение паёв (≠ 0 только в endDate)
+  // Поток инвестора (V4.5.3): t=0 → −(emission+upfront), t=last → distribution+redemption, иначе → distribution
+  investorCashflow: number
   // Итог
   cashEnd: number
+  // V4.5.3 — раскладка ключевых величин
+  noiInflowTrace?: Trace
+  emissionInflowTrace?: Trace
+  disposalInflowTrace?: Trace
+  acquisitionOutflowTrace?: Trace
+  upfrontFeeOutflowTrace?: Trace
+  managementFeeOutflowTrace?: Trace
+  fundExpensesOutflowTrace?: Trace
+  successFeeOperationalOutflowTrace?: Trace
+  successFeeExitOutflowTrace?: Trace
+  distributionOutflowTrace?: Trace
+  redemptionOutflowTrace?: Trace
+  investorCashflowTrace?: Trace
 }
 
 // ─── СЧА и РСП ───────────────────────────────────────────────────────────────
@@ -166,6 +192,16 @@ export type NAVResult = {
   debtBalance: number                           // остаток долга фонда
   nav: number                                   // СЧА = totalAssets − debtBalance
   rsp: number                                   // РСП = nav / totalUnits
+  // V4.5.4 — раскладка по объектам и trace ключевых величин
+  propertyValues?: Array<{
+    propertyId?: string
+    propertyName: string
+    value: number
+    ownershipPct: number
+    valueTrace?: Trace
+  }>
+  navTrace?: Trace
+  unitPriceTrace?: Trace
 }
 
 // ─── Денежный поток пайщика (для IRR) ────────────────────────────────────────
@@ -184,6 +220,11 @@ export type DCFResult = {
   npv: number
   irr: number                                   // годовой IRR, в долях (0.142 = 14.2%)
   discountRate: number
+  // V4.5.5 — trace ключевых величин и поток, на котором считался IRR.
+  npvTrace?: Trace
+  irrTrace?: Trace
+  terminalValueTrace?: Trace
+  irrFlow?: number[]
 }
 
 // ─── Метрики фонда ────────────────────────────────────────────────────────────
@@ -205,6 +246,40 @@ export type MonthlyDebtPayment = {
   interest: number
   total: number
   remainingBalance: number
+}
+
+// ─── Трассировка расчётов (V4.5.1) ────────────────────────────────────────────
+
+/**
+ * Единица измерения операнда в раскладке расчёта. Хранится как литерал, чтобы
+ * UI мог форматировать значение единообразно.
+ */
+export type TraceUnit = '₽' | '%' | 'мес' | 'м²' | 'лет'
+
+/**
+ * Один операнд в формуле раскладки. Если `trace` задан — операнд раскрываемый
+ * (двойной клик в UI → открывается под-раскладка); иначе это лист (константа из БД,
+ * например ставка договора).
+ */
+export type TraceOperand = {
+  label: string                                 // напр. «СЧА на начало месяца»
+  value: number
+  unit?: TraceUnit
+  trace?: Trace
+}
+
+/**
+ * Раскладка одной величины: формула + операнды + итог.
+ *
+ * Ограничения для сериализации в JSON через API:
+ *   - только `string` / `number` / массивы / вложенные `Trace` — без Date / Map / классов
+ *   - `value` обязательно соответствует значению, к которому привязана раскладка
+ *     (инвариант проверяется в unit-тестах V4.5.8)
+ */
+export type Trace = {
+  formula: string                               // напр. «СЧА × ставка / 12»
+  operands: TraceOperand[]
+  value: number
 }
 
 // ─── Reference point для метрик «на сегодня» (V4.4.1) ────────────────────────

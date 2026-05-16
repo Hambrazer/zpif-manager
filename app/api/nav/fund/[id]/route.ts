@@ -109,12 +109,15 @@ export async function GET(_req: Request, { params }: Params) {
         exitCapRate: property.exitCapRate,
         cashflows,
         ownershipPct: fp.ownershipPct,
+        propertyName: property.name,                 // V4.5.7 — для меток в trace
       })
 
       propertyValueInputs.push({
         exitCapRate: property.exitCapRate,
         cashflows,
         ownershipPct: fp.ownershipPct,
+        propertyId: property.id,                     // V4.5.7
+        propertyName: property.name,
       })
     }
 
