@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import type { MonthlyCashflow, MonthlyCashRoll, MonthlyPeriod } from '@/lib/types'
 
 // ─── Типы ────────────────────────────────────────────────────────────────────
@@ -16,6 +17,9 @@ type RowSpec<T> = {
   isExpense?: boolean    // визуально инвертировать знак
   separator?: boolean
   getValue?: (item: T, idx: number, all: readonly T[]) => number
+  // V4.8.1 — иерархия и раскрытие
+  parent?: string        // ключ родителя; если родитель свёрнут — строка скрыта
+  collapsible?: boolean  // у строки есть дети — рендерить кнопку +/-
 }
 
 export type CashflowTableVariant = 'property' | 'fund'
@@ -54,18 +58,18 @@ function investorCF(r: MonthlyCashRoll): number {
 }
 
 const FUND_ROWS: readonly RowSpec<MonthlyCashRoll>[] = [
-  { key: 'sec-op',    kind: 'sectionHeader', label: 'ОПЕРАЦИОННЫЙ ДЕНЕЖНЫЙ ПОТОК' },
-  { key: 'noi',       kind: 'data', label: 'NOI от объектов',     indent: true, getValue: r => r.noiInflow },
-  { key: 'upfront',   kind: 'data', label: 'Upfront fee',          indent: true, isExpense: true, getValue: r => r.upfrontFeeOutflow },
-  { key: 'mgmt',      kind: 'data', label: 'Management fee',       indent: true, isExpense: true, getValue: r => r.managementFeeOutflow },
-  { key: 'fundExp',   kind: 'data', label: 'Fund Level Expenses',  indent: true, isExpense: true, getValue: r => r.fundExpensesOutflow },
-  { key: 'sfOper',    kind: 'data', label: 'Success fee операц.',  indent: true, isExpense: true, getValue: r => r.successFeeOperationalOutflow },
-  { key: 'sfExit',    kind: 'data', label: 'Success fee выход',    indent: true, isExpense: true, getValue: r => r.successFeeExitOutflow },
+  { key: 'sec-op',    kind: 'sectionHeader', label: 'ОПЕРАЦИОННЫЙ ДЕНЕЖНЫЙ ПОТОК', collapsible: true },
+  { key: 'noi',       kind: 'data', label: 'NOI от объектов',     indent: true, parent: 'sec-op', getValue: r => r.noiInflow },
+  { key: 'upfront',   kind: 'data', label: 'Upfront fee',          indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.upfrontFeeOutflow },
+  { key: 'mgmt',      kind: 'data', label: 'Management fee',       indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.managementFeeOutflow },
+  { key: 'fundExp',   kind: 'data', label: 'Fund Level Expenses',  indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.fundExpensesOutflow },
+  { key: 'sfOper',    kind: 'data', label: 'Success fee операц.',  indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.successFeeOperationalOutflow },
+  { key: 'sfExit',    kind: 'data', label: 'Success fee выход',    indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.successFeeExitOutflow },
   { key: 'opTotal',   kind: 'subtotal', label: 'Итого операционный CF', bold: true, separator: true, getValue: r => operationalCF(r) },
 
-  { key: 'sec-inv',   kind: 'sectionHeader', label: 'ИНВЕСТИЦИОННЫЙ ДЕНЕЖНЫЙ ПОТОК' },
-  { key: 'acq',       kind: 'data', label: 'Покупка объектов',     indent: true, isExpense: true, getValue: r => r.acquisitionOutflow },
-  { key: 'disp',      kind: 'data', label: 'Продажа объектов',     indent: true, getValue: r => r.disposalInflow },
+  { key: 'sec-inv',   kind: 'sectionHeader', label: 'ИНВЕСТИЦИОННЫЙ ДЕНЕЖНЫЙ ПОТОК', collapsible: true },
+  { key: 'acq',       kind: 'data', label: 'Покупка объектов',     indent: true, parent: 'sec-inv', isExpense: true, getValue: r => r.acquisitionOutflow },
+  { key: 'disp',      kind: 'data', label: 'Продажа объектов',     indent: true, parent: 'sec-inv', getValue: r => r.disposalInflow },
   { key: 'invTotal',  kind: 'subtotal', label: 'Итого инвестиционный CF', bold: true, separator: true, getValue: r => investingCF(r) },
 
   { key: 'fundFCF',   kind: 'subtotal', label: 'FCF фонда', bold: true, colored: true, separator: true, getValue: r => fundFCF(r) },
@@ -73,8 +77,8 @@ const FUND_ROWS: readonly RowSpec<MonthlyCashRoll>[] = [
   { key: 'dist',       kind: 'data', label: 'Выплаты пайщикам',  isExpense: true, getValue: r => r.distributionOutflow },
   { key: 'redemption', kind: 'data', label: 'Погашение паёв',     isExpense: true, separator: true, getValue: r => r.redemptionOutflow },
 
-  { key: 'sec-fin',   kind: 'sectionHeader', label: 'ФИНАНСОВЫЙ ДЕНЕЖНЫЙ ПОТОК' },
-  { key: 'emission',  kind: 'data', label: 'Эмиссия', indent: true, getValue: r => r.emissionInflow },
+  { key: 'sec-fin',   kind: 'sectionHeader', label: 'ФИНАНСОВЫЙ ДЕНЕЖНЫЙ ПОТОК', collapsible: true },
+  { key: 'emission',  kind: 'data', label: 'Эмиссия', indent: true, parent: 'sec-fin', getValue: r => r.emissionInflow },
   { key: 'finTotal',  kind: 'subtotal', label: 'Итого финансовый CF', bold: true, separator: true, getValue: r => r.emissionInflow },
 
   { key: 'sec-icf',   kind: 'sectionHeader', label: 'ДЕНЕЖНЫЙ ПОТОК ИНВЕСТОРА' },
@@ -99,11 +103,13 @@ function buildPropertyRows(cashflows: readonly MonthlyCashflow[]): RowSpec<Month
   const sumExpenses = (cf: MonthlyCashflow): number =>
     cf.opex + cf.propertyTax + cf.landTax + cf.maintenance + cf.capex
 
+  // V4.8.2: tenants — дети «Аренда» / «Возмещение OPEX» (раскрываемых subtotal'ов).
   const rentChildren: RowSpec<MonthlyCashflow>[] = tenants.map(([id, name]) => ({
     key: `rent-${id}`,
     kind: 'data',
     label: name,
     indent: true,
+    parent: 'rent-parent',
     getValue: cf => cf.tenants.find(t => t.tenantId === id)?.rentIncome ?? 0,
   }))
   const opexReimbChildren: RowSpec<MonthlyCashflow>[] = tenants.map(([id, name]) => ({
@@ -111,24 +117,25 @@ function buildPropertyRows(cashflows: readonly MonthlyCashflow[]): RowSpec<Month
     kind: 'data',
     label: name,
     indent: true,
+    parent: 'opexreimb-parent',
     getValue: cf => cf.tenants.find(t => t.tenantId === id)?.opexReimbursement ?? 0,
   }))
 
   return [
-    { key: 'sec-income',       kind: 'sectionHeader', label: 'ДОХОДЫ' },
-    { key: 'rent-parent',      kind: 'subtotal', label: 'Аренда',          bold: true, getValue: sumRent },
+    { key: 'sec-income',       kind: 'sectionHeader', label: 'ДОХОДЫ', collapsible: true },
+    { key: 'rent-parent',      kind: 'subtotal', label: 'Аренда',          bold: true, parent: 'sec-income', collapsible: rentChildren.length > 0, getValue: sumRent },
     ...rentChildren,
-    { key: 'opexreimb-parent', kind: 'subtotal', label: 'Возмещение OPEX', bold: true, getValue: sumOpexReimb },
+    { key: 'opexreimb-parent', kind: 'subtotal', label: 'Возмещение OPEX', bold: true, parent: 'sec-income', collapsible: opexReimbChildren.length > 0, getValue: sumOpexReimb },
     ...opexReimbChildren,
     { key: 'total-income',     kind: 'subtotal', label: 'Итого доходы',    bold: true, separator: true,
       getValue: cf => sumRent(cf) + sumOpexReimb(cf) },
 
-    { key: 'sec-expenses',     kind: 'sectionHeader', label: 'РАСХОДЫ' },
-    { key: 'opex',             kind: 'data', label: 'OPEX',               isExpense: true, getValue: cf => cf.opex },
-    { key: 'propertyTax',      kind: 'data', label: 'Налог на имущество', isExpense: true, getValue: cf => cf.propertyTax },
-    { key: 'landTax',          kind: 'data', label: 'Налог на ЗУ',        isExpense: true, getValue: cf => cf.landTax },
-    { key: 'maintenance',      kind: 'data', label: 'Эксплуатация',       isExpense: true, getValue: cf => cf.maintenance },
-    { key: 'capex',            kind: 'data', label: 'CAPEX',              isExpense: true, getValue: cf => cf.capex },
+    { key: 'sec-expenses',     kind: 'sectionHeader', label: 'РАСХОДЫ', collapsible: true },
+    { key: 'opex',             kind: 'data', label: 'OPEX',               parent: 'sec-expenses', isExpense: true, getValue: cf => cf.opex },
+    { key: 'propertyTax',      kind: 'data', label: 'Налог на имущество', parent: 'sec-expenses', isExpense: true, getValue: cf => cf.propertyTax },
+    { key: 'landTax',          kind: 'data', label: 'Налог на ЗУ',        parent: 'sec-expenses', isExpense: true, getValue: cf => cf.landTax },
+    { key: 'maintenance',      kind: 'data', label: 'Эксплуатация',       parent: 'sec-expenses', isExpense: true, getValue: cf => cf.maintenance },
+    { key: 'capex',            kind: 'data', label: 'CAPEX',              parent: 'sec-expenses', isExpense: true, getValue: cf => cf.capex },
     { key: 'total-expenses',   kind: 'subtotal', label: 'Итого расходы',  bold: true, isExpense: true, separator: true,
       getValue: sumExpenses },
 
@@ -216,8 +223,49 @@ type TableProps<T extends { period: MonthlyPeriod }> = {
   periodicity?: CashflowTablePeriodicity
 }
 
+// V4.8.1: проверка цепочки parents — если ЛЮБОЙ предок в collapsed, строка скрыта.
+function isVisible<T>(
+  row: RowSpec<T>,
+  rowsByKey: Map<string, RowSpec<T>>,
+  collapsed: Set<string>,
+): boolean {
+  let current = row.parent
+  while (current) {
+    if (collapsed.has(current)) return false
+    current = rowsByKey.get(current)?.parent
+  }
+  return true
+}
+
 function TableInner<T extends { period: MonthlyPeriod }>({ items, rows, periodicity = 'monthly' }: TableProps<T>) {
   const yearGroups = groupByYear(items)
+  // V4.8.1: дефолт — всё развёрнуто. Состояние не персистится между сессиями (задача).
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+
+  const rowsByKey = new Map(rows.map(r => [r.key, r]))
+
+  function toggle(key: string) {
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  function renderCollapseButton(key: string) {
+    const isCollapsed = collapsed.has(key)
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); toggle(key) }}
+        className="mr-1.5 inline-flex h-4 w-4 items-center justify-center rounded text-[10px] font-bold text-gray-500 hover:bg-gray-200"
+        aria-label={isCollapsed ? 'Развернуть' : 'Свернуть'}
+      >
+        {isCollapsed ? '+' : '−'}
+      </button>
+    )
+  }
 
   return (
     <div className="overflow-x-auto rounded-lg border border-gray-200">
@@ -256,10 +304,14 @@ function TableInner<T extends { period: MonthlyPeriod }>({ items, rows, periodic
         {/* ── Тело ── */}
         <tbody>
           {rows.map((row, rowIdx) => {
+            // V4.8.1: скрываем строку, если её предок свёрнут.
+            if (!isVisible(row, rowsByKey, collapsed)) return null
+
             if (row.kind === 'sectionHeader') {
               return (
                 <tr key={row.key} className="bg-gray-100 border-b border-gray-200">
                   <td className="sticky left-0 z-10 bg-gray-100 px-4 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500 whitespace-nowrap border-r border-gray-200">
+                    {row.collapsible && renderCollapseButton(row.key)}
                     {row.label}
                   </td>
                   {items.map((_, idx) => (
@@ -289,6 +341,7 @@ function TableInner<T extends { period: MonthlyPeriod }>({ items, rows, periodic
                     row.indent ? 'pl-8' : '',
                   ].join(' ')}
                 >
+                  {row.collapsible && renderCollapseButton(row.key)}
                   {row.label}
                 </td>
                 {items.map((it, cfIdx) => {

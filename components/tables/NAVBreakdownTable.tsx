@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import type { NAVResult, MonthlyPeriod } from '@/lib/types'
 
 // V4.6.4: иерархическая раскладка СЧА по периодам.
@@ -59,6 +60,9 @@ function findPropertyValue(row: NAVResult, propKey: string): number {
 }
 
 export function NAVBreakdownTable({ data, totalUnits }: Props) {
+  // V4.8.3: «Стоимость объектов» раскрываемо. Дефолт — развёрнуто.
+  const [propsCollapsed, setPropsCollapsed] = useState(false)
+
   if (data.length === 0) {
     return <div className="text-sm text-gray-400 py-8 text-center">Нет данных для отображения</div>
   }
@@ -100,16 +104,19 @@ export function NAVBreakdownTable({ data, totalUnits }: Props) {
         </thead>
 
         <tbody>
-          {/* ── Стоимость объектов (родитель) ── */}
+          {/* ── Стоимость объектов (раскрываемо — V4.8.3) ── */}
           <Row
             label="Стоимость объектов"
             data={data}
             getValue={r => r.propertyValue}
             bold
+            collapsible
+            collapsed={propsCollapsed}
+            onToggle={() => setPropsCollapsed(v => !v)}
           />
 
-          {/* ── Объекты (под-строки) — в V4.8 будут раскрываемы ── */}
-          {properties.map(prop => (
+          {/* ── Объекты (под-строки) — скрыты при свёрнутом родителе ── */}
+          {!propsCollapsed && properties.map(prop => (
             <Row
               key={prop.key}
               label={prop.name}
@@ -145,6 +152,9 @@ function Row({
   indent,
   separator,
   colored,
+  collapsible,
+  collapsed,
+  onToggle,
 }: {
   label: string
   data: NAVResult[]
@@ -153,6 +163,9 @@ function Row({
   indent?: boolean
   separator?: boolean
   colored?: boolean
+  collapsible?: boolean
+  collapsed?: boolean
+  onToggle?: () => void
 }) {
   return (
     <tr
@@ -168,6 +181,16 @@ function Row({
           indent ? 'pl-8' : '',
         ].join(' ')}
       >
+        {collapsible && (
+          <button
+            type="button"
+            onClick={onToggle}
+            className="mr-1.5 inline-flex h-4 w-4 items-center justify-center rounded text-[10px] font-bold text-gray-500 hover:bg-gray-200"
+            aria-label={collapsed ? 'Развернуть' : 'Свернуть'}
+          >
+            {collapsed ? '+' : '−'}
+          </button>
+        )}
         {label}
       </td>
       {data.map((r, idx) => {
