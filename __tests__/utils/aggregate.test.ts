@@ -63,8 +63,7 @@ describe('aggregateCashflows', () => {
   it('фильтр по диапазону дат: from/to ограничивают входной массив', () => {
     const cfs = [makeCF(2024, 1, 100), makeCF(2024, 2, 200), makeCF(2024, 3, 300), makeCF(2024, 4, 400)]
     const res = aggregateCashflows(cfs, 'monthly', {
-      from: new Date(2024, 1, 1),  // Feb
-      to:   new Date(2024, 2, 1),  // Mar
+      range: { from: new Date(2024, 1, 1), to: new Date(2024, 2, 1) },  // Feb–Mar
     })
     expect(res).toHaveLength(2)
     expect(res[0]!.period).toEqual({ year: 2024, month: 2 })
@@ -131,7 +130,7 @@ describe('aggregateFundCashRoll', () => {
       makeRoll(2024, 2, { noiInflow: 100, cashBegin: 100,  cashEnd: 200 }),
       makeRoll(2024, 3, { noiInflow: 100, cashBegin: 200,  cashEnd: 300 }),
     ]
-    const res = aggregateFundCashRoll(cr, 'monthly', { from: new Date(2024, 1, 1) })
+    const res = aggregateFundCashRoll(cr, 'monthly', { range: { from: new Date(2024, 1, 1) } })
     expect(res).toHaveLength(2)
     expect(res[0]!.period.month).toBe(2)
     expect(res[1]!.period.month).toBe(3)
@@ -139,5 +138,102 @@ describe('aggregateFundCashRoll', () => {
 
   it('пустой массив → пустой результат', () => {
     expect(aggregateFundCashRoll([], 'annual')).toEqual([])
+  })
+})
+
+// ─── V4.7.5: calendar vs ltm для annual ───────────────────────────────────────
+
+describe('annual + yearMode', () => {
+  // 24 месяца Jan 2024 .. Dec 2025, noi=100/мес. cashEnd накапливается.
+  const cr = Array.from({ length: 24 }, (_, i) => makeRoll(
+    2024 + Math.floor(i / 12),
+    (i % 12) + 1,
+    { noiInflow: 100, cashBegin: i * 100, cashEnd: (i + 1) * 100 },
+  ))
+
+  describe('calendar (default)', () => {
+    it('2 года, неполных нет → 2 строки [2024, 2025]', () => {
+      const res = aggregateFundCashRoll(cr, 'annual')
+      expect(res).toHaveLength(2)
+      expect(res[0]!.period).toEqual({ year: 2024, month: 12 })
+      expect(res[1]!.period).toEqual({ year: 2025, month: 12 })
+      // noi: 12 × 100 = 1200 для каждого года
+      expect(res[0]!.noiInflow).toBe(1200)
+      expect(res[1]!.noiInflow).toBe(1200)
+    })
+
+    it('cashBegin = первого месяца окна, cashEnd = последнего', () => {
+      const res = aggregateFundCashRoll(cr, 'annual')
+      expect(res[0]!.cashBegin).toBe(0)        // Jan 2024 cashBegin = 0
+      expect(res[0]!.cashEnd).toBe(1200)       // Dec 2024 cashEnd = 12 * 100
+      expect(res[1]!.cashBegin).toBe(1200)     // Jan 2025 cashBegin = 12 * 100
+      expect(res[1]!.cashEnd).toBe(2400)       // Dec 2025 cashEnd = 24 * 100
+    })
+
+    it('явный yearMode=calendar даёт тот же результат, что без options', () => {
+      const def = aggregateFundCashRoll(cr, 'annual')
+      const explicit = aggregateFundCashRoll(cr, 'annual', { yearMode: 'calendar' })
+      expect(explicit).toEqual(def)
+    })
+  })
+
+  describe('ltm', () => {
+    it('referenceDate = Dec 2025 → 2 окна по 12 месяцев (Jan-Dec 2025, Jan-Dec 2024)', () => {
+      const res = aggregateFundCashRoll(cr, 'annual', {
+        yearMode: 'ltm',
+        referenceDate: new Date(2025, 11, 1),
+      })
+      expect(res).toHaveLength(2)
+      // sorted ascending
+      expect(res[0]!.period).toEqual({ year: 2024, month: 12 })
+      expect(res[1]!.period).toEqual({ year: 2025, month: 12 })
+    })
+
+    it('referenceDate = Jun 2025 → окна сдвинуты на 6 мес', () => {
+      // LTM 0: Jul 2024 - Jun 2025
+      // LTM 1: Jul 2023 - Jun 2024 (но Jul-Dec 2023 в cr нет → только Jan-Jun 2024 = 6 строк)
+      const res = aggregateFundCashRoll(cr, 'annual', {
+        yearMode: 'ltm',
+        referenceDate: new Date(2025, 5, 1), // Jun 2025
+      })
+      expect(res.length).toBeGreaterThanOrEqual(2)
+      // Период последнего окна — Jun 2025
+      const last = res[res.length - 1]!
+      expect(last.period).toEqual({ year: 2025, month: 6 })
+      // 12 месяцев в полном окне → noi = 1200
+      expect(last.noiInflow).toBe(1200)
+    })
+
+    it('без referenceDate берёт последний месяц cashRoll', () => {
+      const res = aggregateFundCashRoll(cr, 'annual', { yearMode: 'ltm' })
+      // Последний месяц cr — Dec 2025, значит LTM-окна те же что и в первом ltm-тесте
+      expect(res).toHaveLength(2)
+      expect(res[1]!.period).toEqual({ year: 2025, month: 12 })
+    })
+
+    it('cashBegin LTM-окна = первого месяца окна, cashEnd = последнего', () => {
+      const res = aggregateFundCashRoll(cr, 'annual', {
+        yearMode: 'ltm',
+        referenceDate: new Date(2025, 11, 1),
+      })
+      // LTM последнее окно — Jan-Dec 2025: cashBegin Jan 2025 = 1200, cashEnd Dec 2025 = 2400
+      expect(res[1]!.cashBegin).toBe(1200)
+      expect(res[1]!.cashEnd).toBe(2400)
+      // LTM предыдущее окно — Jan-Dec 2024: cashBegin Jan 2024 = 0, cashEnd Dec 2024 = 1200
+      expect(res[0]!.cashBegin).toBe(0)
+      expect(res[0]!.cashEnd).toBe(1200)
+    })
+
+    it('периоды позже referenceDate игнорируются', () => {
+      // referenceDate = Dec 2024 → периоды 2025 не должны попасть
+      const res = aggregateFundCashRoll(cr, 'annual', {
+        yearMode: 'ltm',
+        referenceDate: new Date(2024, 11, 1),
+      })
+      // Только одно полное окно: Jan-Dec 2024
+      expect(res).toHaveLength(1)
+      expect(res[0]!.period).toEqual({ year: 2024, month: 12 })
+      expect(res[0]!.noiInflow).toBe(1200)
+    })
   })
 })

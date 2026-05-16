@@ -2,6 +2,18 @@ import type { MonthlyCashflow, MonthlyCashRoll, TenantCashflow, MonthlyPeriod } 
 
 export type AggregationPeriod = 'monthly' | 'quarterly' | 'annual'
 
+// V4.7.1: режим для annual-агрегации.
+//   'calendar' (default) — группировка по календарным годам (Jan–Dec).
+//   'ltm'                — окна по 12 месяцев, заканчивающиеся в referenceDate
+//                          и идущие назад. Окна не пересекаются.
+export type YearMode = 'calendar' | 'ltm'
+
+export type AggregateOptions = {
+  yearMode?: YearMode
+  referenceDate?: Date
+  range?: { from?: Date | null; to?: Date | null }
+}
+
 /**
  * V3.9.1: агрегированный денежный поток объекта.
  *
@@ -34,6 +46,46 @@ function isInRange(p: MonthlyPeriod, from: Date | null, to: Date | null): boolea
   return true
 }
 
+// V4.7.1: разница в месяцах от refDate до period (refDate >= period → ≥ 0).
+function monthsBack(refDate: Date, period: MonthlyPeriod): number {
+  const refY = refDate.getFullYear()
+  const refM = refDate.getMonth() + 1
+  return (refY - period.year) * 12 + (refM - period.month)
+}
+
+// V4.7.1: для annual+ltm возвращает { key, endPeriod } LTM-окна, в которое
+// попадает period. Возвращает null, если period > refDate (вне окон).
+function ltmBucket(
+  period: MonthlyPeriod,
+  refDate: Date,
+): { key: string; endPeriod: MonthlyPeriod } | null {
+  const back = monthsBack(refDate, period)
+  if (back < 0) return null
+  const idx = Math.floor(back / 12)
+  // Конец окна = refDate − idx*12 месяцев (с точностью до месяца).
+  const refY = refDate.getFullYear()
+  const refM = refDate.getMonth() + 1
+  const totalMonthsFromY0 = refY * 12 + (refM - 1) - idx * 12
+  const endYear = Math.floor(totalMonthsFromY0 / 12)
+  const endMonth = (totalMonthsFromY0 % 12) + 1
+  return {
+    key: `LTM-${idx}`,
+    endPeriod: { year: endYear, month: endMonth },
+  }
+}
+
+function lastPeriodAsDate(items: { period: MonthlyPeriod }[]): Date | null {
+  if (items.length === 0) return null
+  // Берём ПОСЛЕДНИЙ период по календарному порядку.
+  let max = items[0]!.period
+  for (const it of items) {
+    if (it.period.year > max.year || (it.period.year === max.year && it.period.month > max.month)) {
+      max = it.period
+    }
+  }
+  return new Date(max.year, max.month - 1, 1)
+}
+
 function emptyAggregate(period: MonthlyPeriod): AggregatedCashflow {
   return {
     period,
@@ -53,31 +105,47 @@ function emptyAggregate(period: MonthlyPeriod): AggregatedCashflow {
 /**
  * Агрегирует помесячный денежный поток по выбранной периодичности.
  *
- * Суммирует числовые поля MonthlyCashflow в пределах окна (месяц/квартал/год).
- * Tenants внутри окна сворачиваются по `tenantId`: суммируются `rentIncome` и
- * `opexReimbursement`, `tenantName` берётся из первой записи.
+ * V4.7.2: options.yearMode для annual — 'calendar' (default) или 'ltm'.
  *
- * Опциональный `range` фильтрует месяцы, попадающие в окно — границы по `period`
- * (первое число месяца).
+ * Числовые поля MonthlyCashflow суммируются в пределах окна. Tenants внутри
+ * окна сворачиваются по `tenantId` (rentIncome/opexReimbursement суммируются,
+ * tenantName берётся из первой записи).
  */
 export function aggregateCashflows(
   cashflows: MonthlyCashflow[],
   mode: AggregationPeriod,
-  range: { from?: Date | null; to?: Date | null } = {},
+  options: AggregateOptions = {},
 ): AggregatedCashflow[] {
-  const from = range.from ?? null
-  const to = range.to ?? null
+  const from = options.range?.from ?? null
+  const to = options.range?.to ?? null
+  const yearMode: YearMode = options.yearMode ?? 'calendar'
+
+  // Для LTM нужна reference date — либо из options, либо последний месяц cashflows.
+  const refDate: Date | null = mode === 'annual' && yearMode === 'ltm'
+    ? (options.referenceDate ?? lastPeriodAsDate(cashflows))
+    : null
 
   const buckets = new Map<string, AggregatedCashflow>()
-  const tenantBuckets = new Map<string, Map<string, TenantCashflow>>() // bucketKey → tenantId → tenant
+  const tenantBuckets = new Map<string, Map<string, TenantCashflow>>()
 
   for (const cf of cashflows) {
     if (!isInRange(cf.period, from, to)) continue
 
-    const key = periodBucketKey(cf.period, mode)
+    let key: string
+    let endPeriod: MonthlyPeriod
+    if (mode === 'annual' && yearMode === 'ltm' && refDate) {
+      const bucket = ltmBucket(cf.period, refDate)
+      if (!bucket) continue
+      key = bucket.key
+      endPeriod = bucket.endPeriod
+    } else {
+      key = periodBucketKey(cf.period, mode)
+      endPeriod = bucketEndPeriod(cf.period, mode)
+    }
+
     let agg = buckets.get(key)
     if (!agg) {
-      agg = emptyAggregate(bucketEndPeriod(cf.period, mode))
+      agg = emptyAggregate(endPeriod)
       buckets.set(key, agg)
       tenantBuckets.set(key, new Map())
     }
@@ -109,7 +177,6 @@ export function aggregateCashflows(
     }
   }
 
-  // Сворачиваем tenants в массивы и сортируем результат по периоду
   for (const [key, agg] of buckets) {
     agg.tenants = Array.from(tenantBuckets.get(key)!.values())
   }
@@ -120,7 +187,7 @@ export function aggregateCashflows(
   })
 }
 
-// ─── Агрегация ОДДС фонда (V3.9.2) ────────────────────────────────────────────
+// ─── Агрегация ОДДС фонда (V3.9.2 + V4.7.1) ───────────────────────────────────
 
 export type AggregatedCashRoll = MonthlyCashRoll
 
@@ -148,18 +215,24 @@ function emptyCashRoll(period: MonthlyPeriod): AggregatedCashRoll {
 /**
  * Агрегация помесячного кэш-ролла фонда по периодичности.
  *
- * Притоки и оттоки внутри окна суммируются. `cashBegin` берётся из ПЕРВОГО месяца
- * окна, `cashEnd` — из ПОСЛЕДНЕГО (чтобы сохранить корректное состояние кэша по
- * границам периода). Если фильтр диапазона убирает часть месяцев — границы окна
- * рассчитываются по тому, что осталось.
+ * V4.7.1: options.yearMode для annual — 'calendar' (default) или 'ltm'.
+ *
+ * Притоки и оттоки внутри окна суммируются. `cashBegin` берётся из ПЕРВОГО
+ * месяца окна, `cashEnd` — из ПОСЛЕДНЕГО (чтобы сохранить корректное состояние
+ * кэша по границам периода).
  */
 export function aggregateFundCashRoll(
   cashRoll: MonthlyCashRoll[],
   mode: AggregationPeriod,
-  range: { from?: Date | null; to?: Date | null } = {},
+  options: AggregateOptions = {},
 ): AggregatedCashRoll[] {
-  const from = range.from ?? null
-  const to = range.to ?? null
+  const from = options.range?.from ?? null
+  const to = options.range?.to ?? null
+  const yearMode: YearMode = options.yearMode ?? 'calendar'
+
+  const refDate: Date | null = mode === 'annual' && yearMode === 'ltm'
+    ? (options.referenceDate ?? lastPeriodAsDate(cashRoll))
+    : null
 
   const buckets = new Map<string, AggregatedCashRoll>()
   const bucketBoundaries = new Map<string, { firstCashBegin: number; lastCashEnd: number }>()
@@ -167,10 +240,21 @@ export function aggregateFundCashRoll(
   for (const r of cashRoll) {
     if (!isInRange(r.period, from, to)) continue
 
-    const key = periodBucketKey(r.period, mode)
+    let key: string
+    let endPeriod: MonthlyPeriod
+    if (mode === 'annual' && yearMode === 'ltm' && refDate) {
+      const bucket = ltmBucket(r.period, refDate)
+      if (!bucket) continue
+      key = bucket.key
+      endPeriod = bucket.endPeriod
+    } else {
+      key = periodBucketKey(r.period, mode)
+      endPeriod = bucketEndPeriod(r.period, mode)
+    }
+
     let agg = buckets.get(key)
     if (!agg) {
-      agg = emptyCashRoll(bucketEndPeriod(r.period, mode))
+      agg = emptyCashRoll(endPeriod)
       buckets.set(key, agg)
       bucketBoundaries.set(key, { firstCashBegin: r.cashBegin, lastCashEnd: r.cashEnd })
     } else {
@@ -193,7 +277,6 @@ export function aggregateFundCashRoll(
     agg.investorCashflow += r.investorCashflow
   }
 
-  // Финализируем cashBegin/cashEnd окна
   for (const [key, agg] of buckets) {
     const b = bucketBoundaries.get(key)!
     agg.cashBegin = b.firstCashBegin

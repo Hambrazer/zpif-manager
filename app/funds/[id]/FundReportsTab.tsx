@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { CashflowTable } from '@/components/tables/CashflowTable'
-import { aggregateFundCashRoll, type AggregationPeriod } from '@/lib/utils/aggregate'
+import { aggregateFundCashRoll, type AggregationPeriod, type YearMode } from '@/lib/utils/aggregate'
 import { calcInvestorIRR } from '@/lib/calculations/metrics'
 import { calcIRR } from '@/lib/calculations/dcf'
 import { formatRub, formatPct, formatDate } from '@/lib/utils/format'
@@ -47,6 +47,7 @@ type ReportType = 'fundcf' | 'investor' | 'portfolio'
 type ReportSnapshot = {
   type: ReportType
   mode: AggregationPeriod
+  yearMode: YearMode    // V4.7.4 — применяется при mode='annual'
   from: Date | null
   to: Date | null
 }
@@ -67,6 +68,7 @@ function parseDateOrNull(s: string): Date | null {
 export function FundReportsTab(props: Props) {
   const [reportType, setReportType] = useState<ReportType>('fundcf')
   const [mode, setMode]             = useState<AggregationPeriod>('annual')
+  const [yearMode, setYearMode]     = useState<YearMode>('calendar')   // V4.7.4
   const [from, setFrom]             = useState<string>('')
   const [to, setTo]                 = useState<string>('')
   const [snapshot, setSnapshot]     = useState<ReportSnapshot | null>(null)
@@ -75,6 +77,7 @@ export function FundReportsTab(props: Props) {
     setSnapshot({
       type: reportType,
       mode,
+      yearMode,
       from: parseDateOrNull(from),
       to:   parseDateOrNull(to),
     })
@@ -85,7 +88,8 @@ export function FundReportsTab(props: Props) {
     switch (snapshot.type) {
       case 'fundcf': {
         const items = aggregateFundCashRoll(props.cashRoll, snapshot.mode, {
-          from: snapshot.from, to: snapshot.to,
+          range: { from: snapshot.from, to: snapshot.to },
+          yearMode: snapshot.yearMode,
         })
         exportFundCashflowReportToExcel(items, snapshot.mode, props.fundName)
         break
@@ -146,6 +150,16 @@ export function FundReportsTab(props: Props) {
                 <option value="monthly">Помесячно</option>
                 <option value="quarterly">Поквартально</option>
                 <option value="annual">Погодно</option>
+              </select>
+            </div>
+          )}
+
+          {reportType === 'fundcf' && mode === 'annual' && (
+            <div>
+              <label className={labelCls}>Год</label>
+              <select value={yearMode} onChange={e => setYearMode(e.target.value as YearMode)} className={inputCls}>
+                <option value="calendar">Календарный</option>
+                <option value="ltm">LTM</option>
               </select>
             </div>
           )}
@@ -214,8 +228,11 @@ export function FundReportsTab(props: Props) {
 
 function FundCashflowBody({ cashRoll, snapshot }: { cashRoll: MonthlyCashRoll[]; snapshot: ReportSnapshot }) {
   const aggregated = useMemo(
-    () => aggregateFundCashRoll(cashRoll, snapshot.mode, { from: snapshot.from, to: snapshot.to }),
-    [cashRoll, snapshot.mode, snapshot.from, snapshot.to],
+    () => aggregateFundCashRoll(cashRoll, snapshot.mode, {
+      range: { from: snapshot.from, to: snapshot.to },
+      yearMode: snapshot.yearMode,
+    }),
+    [cashRoll, snapshot.mode, snapshot.yearMode, snapshot.from, snapshot.to],
   )
 
   if (aggregated.length === 0) return <Empty text="Нет данных в выбранном периоде" />

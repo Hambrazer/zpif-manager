@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { CashflowTable } from '@/components/tables/CashflowTable'
 import { CashRollTable } from '@/components/tables/CashRollTable'
 import { NAVBreakdownTable } from '@/components/tables/NAVBreakdownTable'
+import { aggregateFundCashRoll, type YearMode } from '@/lib/utils/aggregate'
 import { calcInvestorIRR, getReferencePoint } from '@/lib/calculations/metrics'
 import { formatRub, formatPct } from '@/lib/utils/format'
 import type {
@@ -133,9 +134,10 @@ export function FundCashflowBlock({
   totalUnits,
 }: Props) {
   const [cfTab, setCfTab] = useState<CfTab>('cashflow')
+  // V4.7.3: переключатель Календарный/LTM для вкладки «Денежный поток».
+  const [yearMode, setYearMode] = useState<YearMode>('calendar')
 
-  // V4.4.2: метрики над таблицей считаются на reference point.
-  // Сегодня берётся в момент рендера — это согласуется с правилом «расчёты на лету».
+  // V4.4.2: reference point на лету (метрики + LTM-агрегация).
   const ref = getReferencePoint(
     { startDate: fundStartDate, endDate: fundEndDate },
     new Date(),
@@ -143,6 +145,16 @@ export function FundCashflowBlock({
   const metrics = computeMetrics(
     ref, cashflows, cashRoll, totalAcquisitionPrice, navData, totalUnits,
   )
+
+  // V4.7.3: годовая агрегация cashRoll для CashflowTable (V4.6.3 «в годовом режиме»).
+  // Для LTM используется reference date — согласованно с метриками.
+  const ltmRefDate = ref.status === 'active' || ref.status === 'closed' ? ref.date : undefined
+  const annualCashRoll = cashRoll.length > 0
+    ? aggregateFundCashRoll(cashRoll, 'annual', {
+        yearMode,
+        ...(yearMode === 'ltm' && ltmRefDate ? { referenceDate: ltmRefDate } : {}),
+      })
+    : []
 
   const tabs: { id: CfTab; label: string }[] = [
     { id: 'cashflow', label: 'Денежный поток' },
@@ -190,8 +202,29 @@ export function FundCashflowBlock({
         ))}
       </div>
 
-      {/* ── Таблица CF / Кэш-ролл / СЧА ── */}
-      {cfTab === 'cashflow' && <CashflowTable cashRoll={cashRoll} variant="fund" />}
+      {/* ── Переключатель Календарный / LTM (только для annual-вкладки «Денежный поток») ── */}
+      {cfTab === 'cashflow' && (
+        <div className="flex items-center gap-1">
+          {(['calendar', 'ltm'] as YearMode[]).map(m => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setYearMode(m)}
+              className={[
+                'px-3 py-1 rounded-md text-xs font-medium transition-colors',
+                yearMode === m
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
+              ].join(' ')}
+            >
+              {m === 'calendar' ? 'Календарный' : 'LTM'}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ── Таблица CF (annual) / Кэш-ролл (помесячно) / СЧА ── */}
+      {cfTab === 'cashflow' && <CashflowTable cashRoll={annualCashRoll} variant="fund" periodicity="annual" />}
       {cfTab === 'cashroll' && <CashRollTable data={cashRoll} />}
       {cfTab === 'nav' && (
         navData

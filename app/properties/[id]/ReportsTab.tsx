@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { CashflowTable } from '@/components/tables/CashflowTable'
 import { calcDCF } from '@/lib/calculations/dcf'
-import { aggregateCashflows, type AggregationPeriod } from '@/lib/utils/aggregate'
+import { aggregateCashflows, type AggregationPeriod, type YearMode } from '@/lib/utils/aggregate'
 import { calcWAULT } from '@/lib/calculations/metrics'
 import {
   exportCashflowReportToExcel,
@@ -52,6 +52,7 @@ type ReportType = 'cashflow' | 'rentroll' | 'dcf'
 type ReportSnapshot = {
   type: ReportType
   mode: AggregationPeriod
+  yearMode: YearMode   // V4.7.4 — применяется при mode='annual'
   from: Date | null
   to: Date | null
   cutoff: Date  // для rent roll
@@ -77,6 +78,7 @@ function parseDateOrNull(s: string): Date | null {
 export function ReportsTab(props: Props) {
   const [reportType, setReportType] = useState<ReportType>('cashflow')
   const [mode, setMode]             = useState<AggregationPeriod>('monthly')
+  const [yearMode, setYearMode]     = useState<YearMode>('calendar')   // V4.7.4
   const [from, setFrom]             = useState<string>('')
   const [to, setTo]                 = useState<string>('')
   const [snapshot, setSnapshot]     = useState<ReportSnapshot | null>(null)
@@ -85,6 +87,7 @@ export function ReportsTab(props: Props) {
     setSnapshot({
       type: reportType,
       mode,
+      yearMode,
       from: parseDateOrNull(from),
       to:   parseDateOrNull(to),
       cutoff: parseDateOrNull(to) ?? new Date(),
@@ -96,7 +99,8 @@ export function ReportsTab(props: Props) {
     switch (snapshot.type) {
       case 'cashflow': {
         const items = aggregateCashflows(props.cashflows, snapshot.mode, {
-          from: snapshot.from, to: snapshot.to,
+          range: { from: snapshot.from, to: snapshot.to },
+          yearMode: snapshot.yearMode,
         })
         exportCashflowReportToExcel(items, snapshot.mode, props.propertyName)
         break
@@ -143,6 +147,16 @@ export function ReportsTab(props: Props) {
                 <option value="monthly">Помесячно</option>
                 <option value="quarterly">Поквартально</option>
                 <option value="annual">Погодно</option>
+              </select>
+            </div>
+          )}
+
+          {reportType === 'cashflow' && mode === 'annual' && (
+            <div>
+              <label className={labelCls}>Год</label>
+              <select value={yearMode} onChange={e => setYearMode(e.target.value as YearMode)} className={inputCls}>
+                <option value="calendar">Календарный</option>
+                <option value="ltm">LTM</option>
               </select>
             </div>
           )}
@@ -229,7 +243,10 @@ function CashFlowDetailBody({
   error: string | null
 }) {
   const aggregated = useMemo(
-    () => aggregateCashflows(cashflows, snapshot.mode, { from: snapshot.from, to: snapshot.to }),
+    () => aggregateCashflows(cashflows, snapshot.mode, {
+      range: { from: snapshot.from, to: snapshot.to },
+      yearMode: snapshot.yearMode,
+    }),
     [cashflows, snapshot.mode, snapshot.from, snapshot.to],
   )
 
