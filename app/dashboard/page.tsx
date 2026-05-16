@@ -5,24 +5,23 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import { FundsDashboard, type FundStatusFilter } from './FundsDashboard'
 import type { FundSummary } from './FundsDashboard'
-import { calcPropertyCashflow, type PropertyExpenseInput } from '@/lib/calculations/cashflow'
-import { calcFundCashflow, calcNAV, calcNAVPerUnit, calcInvestorIRR } from '@/lib/calculations/metrics'
-import { calcFundCashRoll, generatePeriods, type PropertyCFInput } from '@/lib/calculations/fund-cashflow'
-import { calcDCF } from '@/lib/calculations/dcf'
-import { MONTHS_PER_YEAR } from '@/lib/calculations/constants'
+import { calcPropertyCashflow, buildPropertyPeriods, type PropertyExpenseInput } from '@/lib/calculations/cashflow'
+import { calcInvestorIRR, getReferencePoint } from '@/lib/calculations/metrics'
+import { calcFundCashRoll, type PropertyCFInput } from '@/lib/calculations/fund-cashflow'
+import { calcNAVTimeSeries, type PropertyValueInput } from '@/lib/calculations/nav'
 import type {
   LeaseInput,
   CapexInput,
+  CapexReserveInput,
   DebtInput,
   FundInput,
-  MonthlyPeriod,
-  MonthlyCashflow,
+  MonthlyCashRoll,
   IndexationType,
   AmortizationType,
   DistributionPeriodicity,
+  ReferencePoint,
 } from '@/lib/types'
 
-const DEFAULT_YEARS = 10
 const DEFAULT_CPI_RATE = 0.07
 
 // V4.3.3: маппинг таблетки фильтра → список FundStatus для where.
@@ -37,6 +36,26 @@ function parseFilter(raw: string | string[] | undefined): FundStatusFilter {
   const value = Array.isArray(raw) ? raw[0] : raw
   if (value === 'closed' || value === 'archived' || value === 'all') return value
   return 'active'
+}
+
+function findIndexByDate(items: { period: { year: number; month: number } }[], date: Date): number {
+  const y = date.getFullYear()
+  const m = date.getMonth() + 1
+  return items.findIndex(it => it.period.year === y && it.period.month === m)
+}
+
+// V4.4.3: окно NOI на 12 месяцев в зависимости от reference status.
+function noiWindowSum(cashRoll: MonthlyCashRoll[], refIdx: number, ref: ReferencePoint): number | null {
+  if (refIdx === -1) return null
+  if (ref.status === 'active') {
+    const window = cashRoll.slice(refIdx + 1, refIdx + 13)
+    return window.length > 0 ? window.reduce((s, r) => s + r.noiInflow, 0) : null
+  }
+  if (ref.status === 'closed') {
+    const window = cashRoll.slice(Math.max(0, refIdx - 11), refIdx + 1)
+    return window.length > 0 ? window.reduce((s, r) => s + r.noiInflow, 0) : null
+  }
+  return null
 }
 
 type PageProps = {
@@ -70,22 +89,16 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     orderBy: { createdAt: 'asc' },
   })
 
-  const now = new Date()
-  const startYear = now.getFullYear()
-  const startMonth = now.getMonth() + 1
+  const today = new Date()
 
   const funds: FundSummary[] = fundsRaw.map(fund => {
-    const propertyCashflows: MonthlyCashflow[][] = []
-    let totalAcquisitionPrice = 0
-    let totalPropertyNPV = 0
+    const ref = getReferencePoint(fund, today)
+
     let totalRentableArea = 0
     let totalActiveLeaseArea = 0
 
-    const totalMonths = DEFAULT_YEARS * MONTHS_PER_YEAR
-    const periods: MonthlyPeriod[] = Array.from({ length: totalMonths }, (_, i) => {
-      const m = startMonth - 1 + i
-      return { year: startYear + Math.floor(m / 12), month: (m % 12) + 1 }
-    })
+    const propertyCFInputs: PropertyCFInput[] = []
+    const propertyValueInputs: PropertyValueInput[] = []
 
     for (const fp of fund.properties) {
       const property = fp.property
@@ -131,14 +144,32 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         plannedDate: c.plannedDate,
       }))
 
-      const propertyCF = calcPropertyCashflow(propertyInput, leases, capexItems, periods)
-      propertyCashflows.push(propertyCF)
+      const capexReserve: CapexReserveInput | null = property.capexReserve
+        ? {
+            ratePerSqm: property.capexReserve.ratePerSqm,
+            startDate: property.capexReserve.startDate,
+            indexationType: property.capexReserve.indexationType as IndexationType,
+            indexationRate: property.capexReserve.indexationRate,
+          }
+        : null
 
-      const acquisitionPrice = property.acquisitionPrice ?? 0
-      totalAcquisitionPrice += acquisitionPrice
+      // V4.2.2: полный CF объекта на projectionYears (не урезается фондом).
+      const periods = buildPropertyPeriods(property.purchaseDate, property.projectionYears)
+      const cashflows = calcPropertyCashflow(propertyInput, leases, capexItems, periods, capexReserve)
 
-      const dcfResult = calcDCF(propertyCF, property.wacc, property.exitCapRate, acquisitionPrice)
-      totalPropertyNPV += dcfResult.npv
+      propertyCFInputs.push({
+        acquisitionPrice: property.acquisitionPrice,
+        purchaseDate: property.purchaseDate,
+        saleDate: property.saleDate,
+        exitCapRate: property.exitCapRate,
+        cashflows,
+        ownershipPct: fp.ownershipPct,
+      })
+      propertyValueInputs.push({
+        exitCapRate: property.exitCapRate,
+        cashflows,
+        ownershipPct: fp.ownershipPct,
+      })
 
       totalRentableArea += property.rentableArea
       totalActiveLeaseArea += leases
@@ -146,26 +177,26 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         .reduce((sum, l) => sum + l.area, 0)
     }
 
-    if (propertyCashflows.length === 0) {
+    const occupancy = totalRentableArea > 0
+      ? totalActiveLeaseArea / totalRentableArea
+      : null
+
+    if (propertyCFInputs.length === 0 || ref.status === 'not_started') {
       return {
         id: fund.id,
         name: fund.name,
         registrationNumber: fund.registrationNumber,
         status: fund.status,
+        referenceStatus: ref.status,
         totalUnits: fund.totalUnits,
         propertyCount: fund._count.properties,
         annualNOI: null,
         irr: null,
         nav: null,
         navPerUnit: null,
-        occupancy: null,
+        occupancy,
       }
     }
-
-    const approxNAV = fund.properties.reduce(
-      (sum, fp) => sum + (fp.property.acquisitionPrice ?? 0), 0
-    )
-    const annualFundExpenses = (fund.managementFeeRate + fund.fundExpensesRate) * approxNAV
 
     const fundDebts: DebtInput[] = fund.fundDebts.map(d => ({
       id: d.id,
@@ -175,62 +206,6 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       endDate: d.endDate,
       amortizationType: d.amortizationType as AmortizationType,
     }))
-
-    const fundCF = calcFundCashflow(propertyCashflows, annualFundExpenses, fundDebts, periods)
-    const annualNOI = fundCF.slice(0, 12).reduce((sum, cf) => sum + cf.noi, 0)
-
-    // IRR инвестора: считается через cashRoll фонда на горизонте startDate–endDate
-    const fundPeriods = generatePeriods(fund.startDate, fund.endDate)
-    const propertyCFInputs: PropertyCFInput[] = fund.properties.map(fp => {
-      const property = fp.property
-      const propertyInput: PropertyExpenseInput = {
-        rentableArea: property.rentableArea,
-        opexRate: property.opexRate,
-        maintenanceRate: property.maintenanceRate,
-        cadastralValue: property.cadastralValue,
-        landCadastralValue: property.landCadastralValue,
-        propertyTaxRate: property.propertyTaxRate,
-        landTaxRate: property.landTaxRate,
-        cpiRate: DEFAULT_CPI_RATE,
-      }
-      const leases: LeaseInput[] = property.leaseContracts.map(lc => ({
-        id: lc.id,
-        tenantName: lc.tenantName,
-        area: lc.area,
-        baseRent: lc.baseRent,
-        startDate: lc.startDate,
-        endDate: lc.endDate,
-        indexationType: lc.indexationType as IndexationType,
-        indexationRate: lc.indexationRate,
-        firstIndexationDate: lc.firstIndexationDate,
-        indexationFrequency: lc.indexationFrequency,
-        opexReimbursementRate: lc.opexReimbursementRate,
-        opexReimbursementIndexationType: lc.opexReimbursementIndexationType as IndexationType,
-        opexReimbursementIndexationRate: lc.opexReimbursementIndexationRate,
-        opexFirstIndexationDate: lc.opexFirstIndexationDate,
-        opexIndexationFrequency: lc.opexIndexationFrequency,
-        stepRents: lc.stepRents.map(s => ({
-          startDate: s.startDate,
-          endDate: s.endDate,
-          rentRate: s.rentRate,
-          indexAfterEnd: s.indexAfterEnd,
-        })),
-        status: lc.status as 'ACTIVE' | 'EXPIRED' | 'TERMINATING',
-      }))
-      const capexItems: CapexInput[] = property.capexItems.map(c => ({
-        id: c.id,
-        amount: c.amount,
-        plannedDate: c.plannedDate,
-      }))
-      return {
-        acquisitionPrice: property.acquisitionPrice,
-        purchaseDate: property.purchaseDate,
-        saleDate: property.saleDate,
-        exitCapRate: property.exitCapRate,
-        cashflows: calcPropertyCashflow(propertyInput, leases, capexItems, fundPeriods),
-        ownershipPct: fp.ownershipPct,
-      }
-    })
 
     const fundInput: FundInput = {
       id: fund.id,
@@ -250,24 +225,28 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     }
 
     const cashRoll = calcFundCashRoll(fundInput, propertyCFInputs, fundDebts)
-    const irrAnnual = calcInvestorIRR(cashRoll)
-    const irr: number | null = irrAnnual === 0 ? null : irrAnnual
+    const navSeries = calcNAVTimeSeries(cashRoll, propertyValueInputs, fundDebts, fund.totalUnits)
 
-    const totalFundDebtPrincipal = fund.fundDebts.reduce(
-      (sum, d) => sum + d.principalAmount, 0
-    )
-    const nav = calcNAV(totalPropertyNPV, 0, totalFundDebtPrincipal)
-    const navPerUnit = calcNAVPerUnit(nav, fund.totalUnits)
+    const refIdx = findIndexByDate(cashRoll, ref.date)
 
-    const occupancy = totalRentableArea > 0
-      ? totalActiveLeaseArea / totalRentableArea
-      : null
+    const annualNOI = noiWindowSum(cashRoll, refIdx, ref)
+    const refNav = refIdx !== -1 ? navSeries[refIdx] ?? null : null
+    const nav = refNav?.nav ?? null
+    const navPerUnit = refNav?.rsp ?? null
+
+    let irr: number | null = null
+    if (refIdx !== -1) {
+      const sliced = cashRoll.slice(0, refIdx + 1)
+      const irrAnnual = sliced.length > 0 ? calcInvestorIRR(sliced) : 0
+      irr = irrAnnual === 0 ? null : irrAnnual
+    }
 
     return {
       id: fund.id,
       name: fund.name,
       registrationNumber: fund.registrationNumber,
       status: fund.status,
+      referenceStatus: ref.status,
       totalUnits: fund.totalUnits,
       propertyCount: fund._count.properties,
       annualNOI,

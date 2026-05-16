@@ -23,6 +23,8 @@ export type FundSummary = {
   name: string
   registrationNumber: string | null
   status: FundStatus
+  // V4.4.3: статус reference point на «сегодня». Влияет на отображение карточки.
+  referenceStatus: 'not_started' | 'active' | 'closed'
   totalUnits: number
   propertyCount: number
   annualNOI: number | null
@@ -182,32 +184,38 @@ function FundCard({ fund }: { fund: FundSummary }) {
         <div className="mb-4" />
       )}
 
-      <div className="grid grid-cols-3 gap-x-3 gap-y-3 border-t border-gray-100 pt-4">
-        <Metric
-          label="СЧА"
-          value={fund.nav !== null ? formatRub(fund.nav) : '—'}
-        />
-        <Metric
-          label="Стоимость пая"
-          value={fund.navPerUnit !== null ? formatRub(fund.navPerUnit) : '—'}
-        />
-        <Metric
-          label="IRR"
-          value={fund.irr !== null ? formatPct(fund.irr) : '—'}
-        />
-        <Metric
-          label="NOI/год"
-          value={fund.annualNOI !== null ? formatRub(fund.annualNOI) : '—'}
-        />
-        <Metric
-          label="Загрузка"
-          value={fund.occupancy !== null ? formatPct(fund.occupancy) : '—'}
-        />
-        <Metric
-          label="Паёв"
-          value={fund.totalUnits.toLocaleString('ru-RU')}
-        />
-      </div>
+      {fund.referenceStatus === 'not_started' ? (
+        <div className="border-t border-gray-100 pt-4 text-sm text-amber-700 bg-amber-50 -mx-5 -mb-5 px-5 py-3 rounded-b-lg">
+          Фонд не начался — метрики появятся после старта
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-x-3 gap-y-3 border-t border-gray-100 pt-4">
+          <Metric
+            label="СЧА"
+            value={fund.nav !== null ? formatRub(fund.nav) : '—'}
+          />
+          <Metric
+            label="Стоимость пая"
+            value={fund.navPerUnit !== null ? formatRub(fund.navPerUnit) : '—'}
+          />
+          <Metric
+            label="IRR"
+            value={fund.irr !== null ? formatPct(fund.irr) : '—'}
+          />
+          <Metric
+            label="NOI/год"
+            value={fund.annualNOI !== null ? formatRub(fund.annualNOI) : '—'}
+          />
+          <Metric
+            label="Загрузка"
+            value={fund.occupancy !== null ? formatPct(fund.occupancy) : '—'}
+          />
+          <Metric
+            label="Паёв"
+            value={fund.totalUnits.toLocaleString('ru-RU')}
+          />
+        </div>
+      )}
     </Link>
   )
 }

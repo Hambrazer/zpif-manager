@@ -294,6 +294,9 @@ export function FundPage({ fund }: Props) {
               cashRoll={cashRoll}
               totalAcquisitionPrice={totalAcquisitionPrice}
               navData={navData}
+              fundStartDate={new Date(fund.startDate)}
+              fundEndDate={new Date(fund.endDate)}
+              totalUnits={fund.totalUnits}
             />
           )}
         </section>

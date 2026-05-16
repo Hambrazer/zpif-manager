@@ -207,6 +207,19 @@ export type MonthlyDebtPayment = {
   remainingBalance: number
 }
 
+// ─── Reference point для метрик «на сегодня» (V4.4.1) ────────────────────────
+
+/**
+ * Точка отсчёта для метрик фонда, зависит от текущей даты:
+ *   today < fund.startDate → 'not_started' (фонд ещё не начался)
+ *   today > fund.endDate   → 'closed'      (фонд закрыт, date = endDate)
+ *   иначе                  → 'active'      (date = конец предыдущего месяца)
+ */
+export type ReferencePoint =
+  | { status: 'not_started' }
+  | { status: 'active'; date: Date }
+  | { status: 'closed'; date: Date }
+
 // ─── API ──────────────────────────────────────────────────────────────────────
 
 export type ApiResponse<T> = {

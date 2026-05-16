@@ -1,4 +1,11 @@
-import type { MonthlyCashflow, MonthlyCashRoll, MonthlyPeriod, LeaseInput, DebtInput } from '../types'
+import type {
+  MonthlyCashflow,
+  MonthlyCashRoll,
+  MonthlyPeriod,
+  LeaseInput,
+  DebtInput,
+  ReferencePoint,
+} from '../types'
 import { calcDebtSchedule } from './amortization'
 import { calcIRR } from './dcf'
 import { MONTHS_PER_YEAR } from './constants'
@@ -83,6 +90,27 @@ export function calcFundCashflow(
       tenants: [],
     }
   })
+}
+
+/**
+ * V4.4.1: точка отсчёта для метрик «на сегодня».
+ *
+ *   today < fund.startDate → 'not_started'
+ *   today > fund.endDate   → 'closed', date = fund.endDate
+ *   иначе                  → 'active',  date = конец предыдущего месяца
+ *
+ * `today` передаётся явно (а не берётся внутри функции) — чтобы расчёт был
+ * детерминированным и тестируемым.
+ */
+export function getReferencePoint(
+  fund: { startDate: Date; endDate: Date },
+  today: Date,
+): ReferencePoint {
+  if (today < fund.startDate) return { status: 'not_started' }
+  if (today > fund.endDate)   return { status: 'closed', date: fund.endDate }
+  // Конец предыдущего месяца: день 0 текущего месяца → последний день предыдущего
+  const refDate = new Date(today.getFullYear(), today.getMonth(), 0)
+  return { status: 'active', date: refDate }
 }
 
 /**

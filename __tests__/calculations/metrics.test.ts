@@ -7,6 +7,7 @@ import {
   calcInvestorIRR,
   calcCashOnCash,
   calcCapitalGain,
+  getReferencePoint,
 } from '../../lib/calculations/metrics'
 import type {
   MonthlyCashflow, MonthlyCashRoll, MonthlyPeriod, LeaseInput, DebtInput,
@@ -385,5 +386,121 @@ describe('calcCapitalGain', () => {
 
   it('пустой массив → пустой результат', () => {
     expect(calcCapitalGain([], 1_000_000, 1_000_000)).toHaveLength(0)
+  })
+})
+
+// ─── getReferencePoint (V4.4.1) ───────────────────────────────────────────────
+
+describe('getReferencePoint', () => {
+  const fund = {
+    startDate: new Date(2024, 0, 1),   // 1 Jan 2024
+    endDate:   new Date(2026, 11, 31), // 31 Dec 2026
+  }
+
+  it('today до startDate → not_started', () => {
+    const today = new Date(2023, 5, 15)
+    expect(getReferencePoint(fund, today)).toEqual({ status: 'not_started' })
+  })
+
+  it('today сразу за день до startDate → not_started (граница)', () => {
+    const today = new Date(2023, 11, 31)
+    expect(getReferencePoint(fund, today)).toEqual({ status: 'not_started' })
+  })
+
+  it('today === startDate → active (refDate = конец предыдущего месяца)', () => {
+    const today = new Date(2024, 0, 1)
+    const ref = getReferencePoint(fund, today)
+    expect(ref.status).toBe('active')
+    if (ref.status === 'active') {
+      expect(ref.date).toEqual(new Date(2023, 11, 31)) // 31 Dec 2023
+    }
+  })
+
+  it('today в середине срока фонда → active с refDate = последний день предыдущего месяца', () => {
+    const today = new Date(2025, 5, 15) // 15 Jun 2025
+    const ref = getReferencePoint(fund, today)
+    expect(ref.status).toBe('active')
+    if (ref.status === 'active') {
+      expect(ref.date).toEqual(new Date(2025, 4, 31)) // 31 May 2025
+    }
+  })
+
+  it('today === endDate → active (граница: today не больше endDate)', () => {
+    const today = new Date(2026, 11, 31)
+    const ref = getReferencePoint(fund, today)
+    expect(ref.status).toBe('active')
+  })
+
+  it('today после endDate → closed с date = fund.endDate', () => {
+    const today = new Date(2027, 0, 5)
+    const ref = getReferencePoint(fund, today)
+    expect(ref.status).toBe('closed')
+    if (ref.status === 'closed') {
+      expect(ref.date).toEqual(fund.endDate)
+    }
+  })
+
+  it('refDate в active корректно роллится через границу года (today в январе)', () => {
+    // today = 10 Jan 2025 → refDate должен быть 31 Dec 2024
+    const today = new Date(2025, 0, 10)
+    const ref = getReferencePoint(fund, today)
+    expect(ref.status).toBe('active')
+    if (ref.status === 'active') {
+      expect(ref.date).toEqual(new Date(2024, 11, 31))
+    }
+  })
+})
+
+// ─── Forward NOI на reference date — интеграционный smoke ─────────────────────
+
+describe('forward 12M NOI от reference date', () => {
+  // Этот тест проверяет, что на основе reference date можно правильно собрать
+  // forward 12M NOI из массива MonthlyCashflow. Сама агрегация вынесена в
+  // FundCashflowBlock (V4.4.2) и dashboard/page.tsx (V4.4.3) — здесь
+  // фиксируем геометрию: refDate = end of prev month → forward window = next 12 months.
+  it('refDate = 31.12.2024, NOI=100k каждый месяц → forward 12M = 1.2M', () => {
+    const today = new Date(2025, 0, 15)
+    const ref = getReferencePoint(
+      { startDate: new Date(2024, 0, 1), endDate: new Date(2026, 11, 31) },
+      today,
+    )
+    expect(ref.status).toBe('active')
+
+    // Массив помесячного NOI на 24 месяца (Jan 2024 .. Dec 2025)
+    const cashflows = Array.from({ length: 24 }, (_, i) =>
+      makeCF(2024 + Math.floor(i / 12), (i % 12) + 1, 100_000, 100_000),
+    )
+
+    if (ref.status !== 'active') return
+    const refY = ref.date.getFullYear()
+    const refM = ref.date.getMonth() + 1
+    const refIdx = cashflows.findIndex(cf => cf.period.year === refY && cf.period.month === refM)
+    expect(refIdx).toBe(11) // Dec 2024 → 12-я строка
+
+    const forward12 = cashflows.slice(refIdx + 1, refIdx + 13) // Jan..Dec 2025
+    expect(forward12).toHaveLength(12)
+    const sumNOI = forward12.reduce((s, cf) => s + cf.noi, 0)
+    expect(sumNOI).toBeCloseTo(1_200_000, 0)
+  })
+
+  it('closed: trailing 12M до endDate включительно', () => {
+    const fundLocal = { startDate: new Date(2024, 0, 1), endDate: new Date(2025, 11, 31) }
+    const today = new Date(2026, 5, 1) // после endDate
+    const ref = getReferencePoint(fundLocal, today)
+    expect(ref.status).toBe('closed')
+    if (ref.status !== 'closed') return
+
+    const cashflows = Array.from({ length: 24 }, (_, i) =>
+      makeCF(2024 + Math.floor(i / 12), (i % 12) + 1, 100_000, 100_000),
+    )
+    const refIdx = cashflows.findIndex(
+      cf => cf.period.year === ref.date.getFullYear() && cf.period.month === ref.date.getMonth() + 1,
+    )
+    expect(refIdx).toBe(23) // Dec 2025 → 24-я строка
+
+    const trailing12 = cashflows.slice(Math.max(0, refIdx - 11), refIdx + 1) // Jan..Dec 2025
+    expect(trailing12).toHaveLength(12)
+    const sumNOI = trailing12.reduce((s, cf) => s + cf.noi, 0)
+    expect(sumNOI).toBeCloseTo(1_200_000, 0)
   })
 })

@@ -3,12 +3,14 @@
 import { useState } from 'react'
 import { CashflowTable } from '@/components/tables/CashflowTable'
 import { CashRollTable } from '@/components/tables/CashRollTable'
-import { calcInvestorIRR } from '@/lib/calculations/metrics'
+import { calcInvestorIRR, getReferencePoint } from '@/lib/calculations/metrics'
 import { formatRub, formatPct } from '@/lib/utils/format'
 import type {
   MonthlyCashflow,
   MonthlyCashRoll,
+  MonthlyPeriod,
   NAVResult,
+  ReferencePoint,
 } from '@/lib/types'
 
 // ─── Типы ─────────────────────────────────────────────────────────────────────
@@ -18,6 +20,9 @@ type Props = {
   cashRoll: MonthlyCashRoll[]
   totalAcquisitionPrice: number
   navData: NAVResult[] | null
+  fundStartDate: Date
+  fundEndDate: Date
+  totalUnits: number
 }
 
 type Metrics = {
@@ -31,30 +36,73 @@ type Metrics = {
 
 type CfTab = 'cashflow' | 'cashroll'
 
-// ─── Метрики ──────────────────────────────────────────────────────────────────
+// ─── Метрики на reference point (V4.4.2) ──────────────────────────────────────
+
+const EMPTY_METRICS: Metrics = {
+  annualNOI: null, annualFCF: null, capRate: null, irr: null, nav: null, rsp: null,
+}
+
+function findPeriodIndex<T extends { period: MonthlyPeriod }>(
+  items: readonly T[],
+  date: Date,
+): number {
+  const year = date.getFullYear()
+  const month = date.getMonth() + 1
+  return items.findIndex(it => it.period.year === year && it.period.month === month)
+}
+
+function findNAV(navData: NAVResult[] | null, date: Date): NAVResult | null {
+  if (!navData) return null
+  const idx = findPeriodIndex(navData, date)
+  return idx === -1 ? null : navData[idx]!
+}
 
 function computeMetrics(
+  ref: ReferencePoint,
   cashflows: MonthlyCashflow[],
   cashRoll: MonthlyCashRoll[],
   acquisitionPrice: number,
   navData: NAVResult[] | null,
+  totalUnits: number,
 ): Metrics {
-  const base: Metrics = {
-    annualNOI: null, annualFCF: null, capRate: null, irr: null, nav: null, rsp: null,
+  if (ref.status === 'not_started') return EMPTY_METRICS
+  if (cashflows.length === 0) return EMPTY_METRICS
+
+  // Окно NOI/FCF и индекс reference date в cashRoll:
+  //   active: forward 12M от refDate (т.е. следующие 12 месяцев)
+  //   closed: trailing 12M до endDate включительно
+  const refIdxCF = findPeriodIndex(cashflows, ref.date)
+  const refIdxCR = findPeriodIndex(cashRoll, ref.date)
+
+  let window: MonthlyCashflow[] = []
+  if (ref.status === 'active' && refIdxCF !== -1) {
+    window = cashflows.slice(refIdxCF + 1, refIdxCF + 13)
+  } else if (ref.status === 'closed' && refIdxCF !== -1) {
+    window = cashflows.slice(Math.max(0, refIdxCF - 11), refIdxCF + 1)
   }
-  if (cashflows.length === 0) return base
 
-  const firstYear = cashflows.slice(0, 12)
-  const annualNOI = firstYear.reduce((s, cf) => s + cf.noi, 0)
-  const annualFCF = firstYear.reduce((s, cf) => s + cf.fcf, 0)
-  const capRate = acquisitionPrice > 0 ? annualNOI / acquisitionPrice : null
+  const annualNOI = window.length > 0 ? window.reduce((s, cf) => s + cf.noi, 0) : null
+  const annualFCF = window.length > 0 ? window.reduce((s, cf) => s + cf.fcf, 0) : null
+  const capRate = (annualNOI !== null && acquisitionPrice > 0)
+    ? annualNOI / acquisitionPrice
+    : null
 
-  const irrAnnual = cashRoll.length > 0 ? calcInvestorIRR(cashRoll) : 0
-  const irr = irrAnnual === 0 ? null : irrAnnual
+  // СЧА/РСП — из NAVResult на reference date. РСП берём из nav-серии, чтобы
+  // согласоваться с уже посчитанным значением (а не пересчитывать вручную).
+  const refNav = findNAV(navData, ref.date)
+  const nav = refNav?.nav ?? null
+  const rsp = refNav
+    ? refNav.rsp
+    : (nav !== null && totalUnits > 0 ? nav / totalUnits : null)
 
-  const lastNav = navData && navData.length > 0 ? navData[navData.length - 1] : null
-  const nav = lastNav?.nav ?? null
-  const rsp = lastNav?.rsp ?? null
+  // IRR — накопленный по потоку инвестора, обрезанному до reference date включительно.
+  // Если refIdxCR не нашли (например refDate раньше первого месяца фонда) — IRR=null.
+  let irr: number | null = null
+  if (refIdxCR !== -1) {
+    const sliced = cashRoll.slice(0, refIdxCR + 1)
+    const irrAnnual = sliced.length > 0 ? calcInvestorIRR(sliced) : 0
+    irr = irrAnnual === 0 ? null : irrAnnual
+  }
 
   return { annualNOI, annualFCF, capRate, irr, nav, rsp }
 }
@@ -79,10 +127,21 @@ export function FundCashflowBlock({
   cashRoll,
   totalAcquisitionPrice,
   navData,
+  fundStartDate,
+  fundEndDate,
+  totalUnits,
 }: Props) {
   const [cfTab, setCfTab] = useState<CfTab>('cashflow')
 
-  const metrics = computeMetrics(cashflows, cashRoll, totalAcquisitionPrice, navData)
+  // V4.4.2: метрики над таблицей считаются на reference point.
+  // Сегодня берётся в момент рендера — это согласуется с правилом «расчёты на лету».
+  const ref = getReferencePoint(
+    { startDate: fundStartDate, endDate: fundEndDate },
+    new Date(),
+  )
+  const metrics = computeMetrics(
+    ref, cashflows, cashRoll, totalAcquisitionPrice, navData, totalUnits,
+  )
 
   const tabs: { id: CfTab; label: string }[] = [
     { id: 'cashflow', label: 'Денежный поток' },
@@ -93,16 +152,22 @@ export function FundCashflowBlock({
     <div className="space-y-6">
 
       {/* ── Метрики ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        {metricBoxes(metrics).map(({ label, value, format }) => (
-          <div key={label} className="bg-gray-50 rounded-lg px-4 py-3">
-            <p className="text-xs text-gray-400">{label}</p>
-            <p className="text-base font-semibold text-gray-900 mt-0.5 truncate">
-              {value !== null ? format(value) : '—'}
-            </p>
-          </div>
-        ))}
-      </div>
+      {ref.status === 'not_started' ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          Фонд не начался — метрики появятся после {fundStartDate.toLocaleDateString('ru-RU')}.
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {metricBoxes(metrics).map(({ label, value, format }) => (
+            <div key={label} className="bg-gray-50 rounded-lg px-4 py-3">
+              <p className="text-xs text-gray-400">{label}</p>
+              <p className="text-base font-semibold text-gray-900 mt-0.5 truncate">
+                {value !== null ? format(value) : '—'}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Переключатель таблиц ── */}
       <div className="flex items-center gap-1 border-b border-gray-200 pb-0">
