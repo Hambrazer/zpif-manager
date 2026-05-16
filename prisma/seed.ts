@@ -6,6 +6,7 @@ import {
   AmortizationType,
   DistributionPeriodicity,
   PipelineStatus,
+  FundStatus,
 } from '@prisma/client'
 
 const prisma = new PrismaClient()
@@ -37,6 +38,7 @@ async function main() {
       successFeeExit: 0.20,              // 20% от прироста СЧА
       distributionPeriodicity: DistributionPeriodicity.QUARTERLY,
       hasDebt: true,
+      status: FundStatus.ACTIVE,
     },
   })
 
@@ -58,6 +60,7 @@ async function main() {
       successFeeExit: 0.15,
       distributionPeriodicity: DistributionPeriodicity.QUARTERLY,
       hasDebt: false,
+      status: FundStatus.ACTIVE,
     },
   })
 

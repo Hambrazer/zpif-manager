@@ -4,13 +4,25 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { signOut } from 'next-auth/react'
+import { type FundStatus } from '@prisma/client'
 import { FundForm } from '@/components/forms/FundForm'
 import { formatRub, formatPct } from '@/lib/utils/format'
+
+// V4.3.3: значения query-параметра `?status=` на /dashboard.
+export type FundStatusFilter = 'active' | 'closed' | 'archived' | 'all'
+
+const FILTER_TABS: { value: FundStatusFilter; label: string }[] = [
+  { value: 'active',   label: 'Активные' },
+  { value: 'closed',   label: 'Закрытые' },
+  { value: 'archived', label: 'Архивные' },
+  { value: 'all',      label: 'Все' },
+]
 
 export type FundSummary = {
   id: string
   name: string
   registrationNumber: string | null
+  status: FundStatus
   totalUnits: number
   propertyCount: number
   annualNOI: number | null
@@ -22,9 +34,10 @@ export type FundSummary = {
 
 type Props = {
   funds: FundSummary[]
+  currentFilter: FundStatusFilter
 }
 
-export function FundsDashboard({ funds }: Props) {
+export function FundsDashboard({ funds, currentFilter }: Props) {
   const router = useRouter()
   const [showCreate, setShowCreate] = useState(false)
 
@@ -71,6 +84,8 @@ export function FundsDashboard({ funds }: Props) {
           </button>
         </div>
 
+        <FilterTabs currentFilter={currentFilter} />
+
         {funds.length > 0 && <PortfolioSummaryBar funds={funds} />}
 
         {funds.length === 0 ? (
@@ -105,6 +120,47 @@ export function FundsDashboard({ funds }: Props) {
   )
 }
 
+function FilterTabs({ currentFilter }: { currentFilter: FundStatusFilter }) {
+  return (
+    <div className="flex flex-wrap gap-2 mb-5">
+      {FILTER_TABS.map(tab => {
+        const isActive = tab.value === currentFilter
+        return (
+          <Link
+            key={tab.value}
+            href={tab.value === 'active' ? '/dashboard' : `/dashboard?status=${tab.value}`}
+            className={[
+              'px-3 py-1.5 text-sm rounded-full border transition-colors',
+              isActive
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-700',
+            ].join(' ')}
+          >
+            {tab.label}
+          </Link>
+        )
+      })}
+    </div>
+  )
+}
+
+function StatusBadge({ status }: { status: FundStatus }) {
+  if (status === 'ACTIVE') return null
+  const isClosed = status === 'CLOSED'
+  return (
+    <span
+      className={[
+        'inline-block text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded',
+        isClosed
+          ? 'bg-amber-100 text-amber-700'
+          : 'bg-gray-200 text-gray-600',
+      ].join(' ')}
+    >
+      {isClosed ? 'Закрыт' : 'Архив'}
+    </span>
+  )
+}
+
 function FundCard({ fund }: { fund: FundSummary }) {
   return (
     <Link
@@ -112,7 +168,10 @@ function FundCard({ fund }: { fund: FundSummary }) {
       className="block bg-white rounded-lg border border-gray-200 p-5 hover:shadow-md hover:border-blue-300 transition-all"
     >
       <div className="flex items-start justify-between gap-2 mb-1">
-        <h2 className="font-semibold text-gray-900 leading-snug">{fund.name}</h2>
+        <div className="flex items-center gap-2 min-w-0">
+          <h2 className="font-semibold text-gray-900 leading-snug truncate">{fund.name}</h2>
+          <StatusBadge status={fund.status} />
+        </div>
         <span className="text-xs text-gray-500 whitespace-nowrap mt-0.5">
           {fund.propertyCount} {propertyWord(fund.propertyCount)}
         </span>

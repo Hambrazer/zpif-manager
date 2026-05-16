@@ -5,6 +5,7 @@ export type AmortizationType = 'ANNUITY' | 'BULLET' | 'LINEAR'
 export type LeaseStatus = 'ACTIVE' | 'EXPIRED' | 'TERMINATING'
 export type DistributionPeriodicity = 'MONTHLY' | 'QUARTERLY' | 'ANNUAL'
 export type TerminalType = 'EXIT_CAP_RATE' | 'GORDON'
+export type FundStatus = 'ACTIVE' | 'CLOSED' | 'ARCHIVED'  // V4.3.1
 
 // ─── Периоды ─────────────────────────────────────────────────────────────────
 
@@ -101,6 +102,7 @@ export type FundInput = {
   successFeeOperational: number                 // % от выплат, в долях
   successFeeExit: number                        // % от прироста СЧА, в долях
   distributionPeriodicity: DistributionPeriodicity
+  status?: FundStatus                           // V4.3.2 — не влияет на расчёты, но передаётся API
   properties: PropertyInput[]
   fundDebts: DebtInput[]
 }

@@ -1,13 +1,29 @@
-import { type DistributionPeriodicity } from '@prisma/client'
+import { type DistributionPeriodicity, type FundStatus } from '@prisma/client'
 import { prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/utils/auth'
 
-export async function GET() {
+const ALL_FUND_STATUSES: readonly FundStatus[] = ['ACTIVE', 'CLOSED', 'ARCHIVED']
+const DEFAULT_STATUSES: readonly FundStatus[] = ['ACTIVE', 'CLOSED']
+
+function parseStatusFilter(raw: string | null): FundStatus[] {
+  if (!raw) return [...DEFAULT_STATUSES]
+  const requested = raw.split(',').map(s => s.trim().toUpperCase())
+  const valid = requested.filter((s): s is FundStatus =>
+    (ALL_FUND_STATUSES as readonly string[]).includes(s)
+  )
+  return valid.length > 0 ? valid : [...DEFAULT_STATUSES]
+}
+
+export async function GET(req: Request) {
   const authError = await requireAuth()
   if (authError) return authError
 
+  const { searchParams } = new URL(req.url)
+  const statuses = parseStatusFilter(searchParams.get('status'))
+
   try {
     const funds = await prisma.fund.findMany({
+      where: { status: { in: statuses } },
       include: { _count: { select: { properties: true } } },
       orderBy: { createdAt: 'asc' },
     })

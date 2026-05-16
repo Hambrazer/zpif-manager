@@ -1,8 +1,9 @@
 import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
+import { type FundStatus } from '@prisma/client'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/db'
-import { FundsDashboard } from './FundsDashboard'
+import { FundsDashboard, type FundStatusFilter } from './FundsDashboard'
 import type { FundSummary } from './FundsDashboard'
 import { calcPropertyCashflow, type PropertyExpenseInput } from '@/lib/calculations/cashflow'
 import { calcFundCashflow, calcNAV, calcNAVPerUnit, calcInvestorIRR } from '@/lib/calculations/metrics'
@@ -24,11 +25,33 @@ import type {
 const DEFAULT_YEARS = 10
 const DEFAULT_CPI_RATE = 0.07
 
-export default async function DashboardPage() {
+// V4.3.3: маппинг таблетки фильтра → список FundStatus для where.
+const FILTER_TO_STATUSES: Record<FundStatusFilter, FundStatus[]> = {
+  active:   ['ACTIVE'],
+  closed:   ['CLOSED'],
+  archived: ['ARCHIVED'],
+  all:      ['ACTIVE', 'CLOSED', 'ARCHIVED'],
+}
+
+function parseFilter(raw: string | string[] | undefined): FundStatusFilter {
+  const value = Array.isArray(raw) ? raw[0] : raw
+  if (value === 'closed' || value === 'archived' || value === 'all') return value
+  return 'active'
+}
+
+type PageProps = {
+  searchParams?: { status?: string | string[] }
+}
+
+export default async function DashboardPage({ searchParams }: PageProps) {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
 
+  const filter = parseFilter(searchParams?.status)
+  const statuses = FILTER_TO_STATUSES[filter]
+
   const fundsRaw = await prisma.fund.findMany({
+    where: { status: { in: statuses } },
     include: {
       _count: { select: { properties: true } },
       properties: {
@@ -128,6 +151,7 @@ export default async function DashboardPage() {
         id: fund.id,
         name: fund.name,
         registrationNumber: fund.registrationNumber,
+        status: fund.status,
         totalUnits: fund.totalUnits,
         propertyCount: fund._count.properties,
         annualNOI: null,
@@ -243,6 +267,7 @@ export default async function DashboardPage() {
       id: fund.id,
       name: fund.name,
       registrationNumber: fund.registrationNumber,
+      status: fund.status,
       totalUnits: fund.totalUnits,
       propertyCount: fund._count.properties,
       annualNOI,
@@ -253,5 +278,5 @@ export default async function DashboardPage() {
     }
   })
 
-  return <FundsDashboard funds={funds} />
+  return <FundsDashboard funds={funds} currentFilter={filter} />
 }

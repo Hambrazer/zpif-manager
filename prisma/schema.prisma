@@ -56,6 +56,13 @@ enum PipelineStatus {
   SOLD            // Продан (только если был IN_FUND)
 }
 
+// V4.3.1: статус фонда
+enum FundStatus {
+  ACTIVE     // Активный (по умолчанию)
+  CLOSED     // Закрыт (паи погашены)
+  ARCHIVED   // Архивирован (скрыт из основных списков)
+}
+
 // ─── Фонд ─────────────────────────────────────────────────────────────────────
 
 model Fund {
@@ -74,6 +81,7 @@ model Fund {
   successFeeExit          Float                   // Success fee exit, % от прироста СЧА, в долях
   distributionPeriodicity DistributionPeriodicity
   hasDebt                 Boolean                 @default(false)
+  status                  FundStatus              @default(ACTIVE) // V4.3.1
   createdAt               DateTime                @default(now())
   updatedAt               DateTime                @updatedAt
 
