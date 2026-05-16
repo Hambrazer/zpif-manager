@@ -20,6 +20,7 @@ import type {
   AmortizationType,
   DistributionPeriodicity,
   ReferencePoint,
+  Trace,
 } from '@/lib/types'
 
 const DEFAULT_CPI_RATE = 0.07
@@ -45,17 +46,40 @@ function findIndexByDate(items: { period: { year: number; month: number } }[], d
 }
 
 // V4.4.3: окно NOI на 12 месяцев в зависимости от reference status.
-function noiWindowSum(cashRoll: MonthlyCashRoll[], refIdx: number, ref: ReferencePoint): number | null {
-  if (refIdx === -1) return null
-  if (ref.status === 'active') {
-    const window = cashRoll.slice(refIdx + 1, refIdx + 13)
-    return window.length > 0 ? window.reduce((s, r) => s + r.noiInflow, 0) : null
+function noiWindow(cashRoll: MonthlyCashRoll[], refIdx: number, ref: ReferencePoint): MonthlyCashRoll[] {
+  if (refIdx === -1) return []
+  if (ref.status === 'active') return cashRoll.slice(refIdx + 1, refIdx + 13)
+  if (ref.status === 'closed') return cashRoll.slice(Math.max(0, refIdx - 11), refIdx + 1)
+  return []
+}
+
+// V4.9.5: trace суммы NOI/год — операнды по месяцам окна, с под-trace noiInflowTrace.
+function annualNoiTrace(window: MonthlyCashRoll[]): Trace {
+  return {
+    formula: `Σ NOI за ${window.length} месяцев`,
+    operands: window.map(r => ({
+      label: `${r.period.year}-${String(r.period.month).padStart(2, '0')}`,
+      value: r.noiInflow,
+      unit: '₽',
+      ...(r.noiInflowTrace ? { trace: r.noiInflowTrace } : {}),
+    })),
+    value: window.reduce((s, r) => s + r.noiInflow, 0),
   }
-  if (ref.status === 'closed') {
-    const window = cashRoll.slice(Math.max(0, refIdx - 11), refIdx + 1)
-    return window.length > 0 ? window.reduce((s, r) => s + r.noiInflow, 0) : null
+}
+
+// V4.9.5: trace IRR — операнды только периоды потока инвестора (открывается в CalcDetails
+// mode='cashflow' с накопленным потоком и итогом как %).
+function investorIrrFlowTrace(sliced: MonthlyCashRoll[], irrAnnual: number): Trace {
+  return {
+    formula: 'IRR от потока инвестора (помесячно, аннуализирован)',
+    operands: sliced.map(r => ({
+      label: `${r.period.year}-${String(r.period.month).padStart(2, '0')}`,
+      value: r.investorCashflow,
+      unit: '₽',
+      ...(r.investorCashflowTrace ? { trace: r.investorCashflowTrace } : {}),
+    })),
+    value: irrAnnual,
   }
-  return null
 }
 
 type PageProps = {
@@ -232,16 +256,25 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
     const refIdx = findIndexByDate(cashRoll, ref.date)
 
-    const annualNOI = noiWindowSum(cashRoll, refIdx, ref)
+    const window = noiWindow(cashRoll, refIdx, ref)
+    const annualNOI = window.length > 0 ? window.reduce((s, r) => s + r.noiInflow, 0) : null
     const refNav = refIdx !== -1 ? navSeries[refIdx] ?? null : null
     const nav = refNav?.nav ?? null
     const navPerUnit = refNav?.rsp ?? null
 
+    // V4.9.5 — раскладки метрик для двойного клика на карточке.
+    const annualNOITrace: Trace | undefined = annualNOI !== null ? annualNoiTrace(window) : undefined
+    const navTrace: Trace | undefined = refNav?.navTrace
+
     let irr: number | null = null
+    let irrTrace: Trace | undefined
     if (refIdx !== -1) {
       const sliced = cashRoll.slice(0, refIdx + 1)
       const irrAnnual = sliced.length > 0 ? calcInvestorIRR(sliced).value : 0
       irr = irrAnnual === 0 ? null : irrAnnual
+      if (irr !== null && sliced.length > 0) {
+        irrTrace = investorIrrFlowTrace(sliced, irrAnnual)
+      }
     }
 
     return {
@@ -257,6 +290,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       nav,
       navPerUnit,
       occupancy,
+      ...(annualNOITrace ? { annualNOITrace } : {}),
+      ...(irrTrace       ? { irrTrace }       : {}),
+      ...(navTrace       ? { navTrace }       : {}),
     }
   })
 

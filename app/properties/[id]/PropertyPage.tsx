@@ -1,7 +1,7 @@
 'use client'
 
 import { Fragment, useState, useEffect, useMemo } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { formatRub, formatPct, formatDate } from '@/lib/utils/format'
 import { PropertyForm } from '@/components/forms/PropertyForm'
@@ -12,7 +12,8 @@ import { exportRentRollToExcel } from '@/lib/utils/exportRentRoll'
 import { CashflowChart } from '@/components/charts/CashflowChart'
 import { CashflowTable } from '@/components/tables/CashflowTable'
 import { ReportsTab } from './ReportsTab'
-import type { MonthlyCashflow } from '@/lib/types'
+import { TRACE_CELL_CLS, useCellDoubleClick } from '@/components/useCellDoubleClick'
+import type { MonthlyCashflow, Trace } from '@/lib/types'
 // Обоснованное исключение из правила «расчёты только в lib/calculations»:
 // интерактивный пересчёт DCF при изменении exitCapRate выполняется на клиенте.
 import { calcDCF } from '@/lib/calculations/dcf'
@@ -113,8 +114,36 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'reports',  label: 'Отчёты'         },
 ]
 
+// V4.10.3: маппинг публичного query-параметра `?tab=` → внутренний Tab.
+// `basic` — публичный алиас вкладки «Основное» (внутри id = 'main', менять
+// исторический идентификатор по всему коду не стоит).
+const TAB_FROM_QUERY: Record<string, Tab> = {
+  basic:    'main',
+  main:     'main',
+  tenants:  'tenants',
+  expenses: 'expenses',
+  capex:    'capex',
+  debt:     'debt',
+  cashflow: 'cashflow',
+  reports:  'reports',
+}
+
+function parseTabParam(raw: string | null): Tab {
+  if (raw !== null && raw in TAB_FROM_QUERY) return TAB_FROM_QUERY[raw]!
+  return 'main'
+}
+
 export function PropertyPage({ property }: { property: PropertyData }) {
-  const [activeTab, setActiveTab] = useState<Tab>('main')
+  // V4.10.3: открывать вкладку по `?tab=`. lazy init — берём из URL при монтировании.
+  const searchParams = useSearchParams()
+  const [activeTab, setActiveTab] = useState<Tab>(() => parseTabParam(searchParams.get('tab')))
+
+  // Если query меняется без размонтирования (например, ручная правка URL) —
+  // синхронизируем активную вкладку. Локальное переключение через setActiveTab
+  // не меняет URL, поэтому эффект не среагирует на «свои» изменения.
+  useEffect(() => {
+    setActiveTab(parseTabParam(searchParams.get('tab')))
+  }, [searchParams])
 
   // CF загружается на уровне страницы — разделяется между вкладками
   // «Расходы» и «Денежный поток» (V3.6.2: «без дополнительного fetch»).
@@ -953,6 +982,11 @@ type DCFSummary = {
   terminalValue: number
   discountRate: number
   projectionYears: number
+  // V4.9.4 — traces (API уже их прокидывает).
+  npvTrace?: Trace
+  irrTrace?: Trace
+  terminalValueTrace?: Trace
+  irrFlow?: number[]
 }
 
 function CashflowTab({
@@ -1014,6 +1048,33 @@ function CashflowTab({
   const effTerminalValue = localDcf?.terminalValue ?? dcf?.terminalValue
   const effNpv           = localDcf?.npv           ?? dcf?.npv
   const effIrr           = localDcf?.irr           ?? dcf?.irr
+
+  // V4.9.4 — эффективные trace: при overriden capRate берём от пересчитанного
+  // localDcf, иначе из API. Так раскладка всегда согласована с показанным числом.
+  const effNpvTrace           = localDcf?.npvTrace           ?? dcf?.npvTrace
+  const effTerminalValueTrace = localDcf?.terminalValueTrace ?? dcf?.terminalValueTrace
+  const effIrrFlow            = localDcf?.irrFlow            ?? dcf?.irrFlow
+
+  // V4.9.4 — кастомный Trace для IRR с операндами-периодами (для CalcDetails mode='cashflow').
+  // t=0: −acquisitionPrice; t=1..n: помесячные потоки из irrFlow (последний включает TV).
+  const effIrrTrace = useMemo<Trace | undefined>(() => {
+    if (effIrr === undefined || effIrr === 0) return undefined
+    if (!effIrrFlow || effIrrFlow.length < 2) return undefined
+    if (cashflows.length === 0) return undefined
+    const operands = effIrrFlow.map((v, t) => ({
+      label: t === 0 ? 't=0 (покупка)' : (cashflows[t - 1] ? `${cashflows[t - 1]!.period.year}-${String(cashflows[t - 1]!.period.month).padStart(2, '0')}` : `t=${t}`),
+      value: v,
+      unit: '₽' as const,
+    }))
+    return {
+      formula: 'IRR от потока объекта (помесячно, аннуализирован)',
+      operands,
+      value: effIrr,
+    }
+  }, [effIrr, effIrrFlow, cashflows])
+
+  // V4.9.4 — хук трассировки.
+  const { open: openTrace, modal: traceModal } = useCellDoubleClick()
 
   function enterCapEdit() {
     const v = effectiveCapRate
@@ -1158,18 +1219,21 @@ function CashflowTab({
                 label="Терм. стоимость"
                 value={effTerminalValue !== undefined ? formatRub(effTerminalValue) : null}
                 loading={dcfLoading}
+                {...(effTerminalValueTrace ? { onDoubleClick: () => openTrace(effTerminalValueTrace, 'Терминальная стоимость') } : {})}
               />
               <DcfMetric
                 label="NPV"
                 value={effNpv !== undefined ? formatRub(effNpv) : null}
                 loading={dcfLoading}
                 {...(effNpv !== undefined ? { highlight: effNpv >= 0 ? 'positive' as const : 'negative' as const } : {})}
+                {...(effNpvTrace ? { onDoubleClick: () => openTrace(effNpvTrace, 'NPV') } : {})}
               />
               <DcfMetric
                 label="IRR"
                 value={effIrr !== undefined ? (effIrr > 0 ? formatPct(effIrr) : '—') : null}
                 loading={dcfLoading}
                 {...(effIrr === 0 ? { sublabel: 'нет цены приобр.' } : {})}
+                {...(effIrrTrace ? { onDoubleClick: () => openTrace(effIrrTrace, 'IRR', { mode: 'cashflow' }) } : {})}
               />
             </div>
 
@@ -1225,6 +1289,8 @@ function CashflowTab({
           <CashflowTable cashflows={cashflows} variant="property" />
         )}
       </div>
+
+      {traceModal}
     </div>
   )
 }
@@ -1235,20 +1301,28 @@ function DcfMetric({
   loading,
   highlight,
   sublabel,
+  onDoubleClick,
 }: {
   label: string
   value: string | null
   loading: boolean
   highlight?: 'positive' | 'negative'
   sublabel?: string
+  onDoubleClick?: () => void                  // V4.9.4 — если задан, карточка кликабельна
 }) {
   const valueColor =
     highlight === 'positive' ? 'text-green-600' :
     highlight === 'negative' ? 'text-red-600'   :
     'text-gray-900'
 
+  const clickable = !!onDoubleClick && !loading && value !== null
+
   return (
-    <div className="bg-gray-50 rounded-md px-3 py-2.5">
+    <div
+      onDoubleClick={clickable ? onDoubleClick : undefined}
+      className={'bg-gray-50 rounded-md px-3 py-2.5 ' + (clickable ? TRACE_CELL_CLS : '')}
+      title={clickable ? 'Двойной клик — раскладка' : undefined}
+    >
       <p className="text-xs text-gray-400">{label}</p>
       {loading ? (
         <div className="mt-1 h-4 w-16 bg-gray-200 rounded animate-pulse" />

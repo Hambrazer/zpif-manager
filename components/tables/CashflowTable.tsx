@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import type { MonthlyCashflow, MonthlyCashRoll, MonthlyPeriod } from '@/lib/types'
+import type { MonthlyCashflow, MonthlyCashRoll, MonthlyPeriod, Trace } from '@/lib/types'
+import { periodTitle, TRACE_CELL_CLS, useCellDoubleClick } from '../useCellDoubleClick'
 
 // ─── Типы ────────────────────────────────────────────────────────────────────
 
@@ -20,6 +21,8 @@ type RowSpec<T> = {
   // V4.8.1 — иерархия и раскрытие
   parent?: string        // ключ родителя; если родитель свёрнут — строка скрыта
   collapsible?: boolean  // у строки есть дети — рендерить кнопку +/-
+  // V4.9.2 — трассировка по двойному клику.
+  getTrace?: (item: T, idx: number, all: readonly T[]) => Trace | undefined
 }
 
 export type CashflowTableVariant = 'property' | 'fund'
@@ -59,30 +62,30 @@ function investorCF(r: MonthlyCashRoll): number {
 
 const FUND_ROWS: readonly RowSpec<MonthlyCashRoll>[] = [
   { key: 'sec-op',    kind: 'sectionHeader', label: 'ОПЕРАЦИОННЫЙ ДЕНЕЖНЫЙ ПОТОК', collapsible: true },
-  { key: 'noi',       kind: 'data', label: 'NOI от объектов',     indent: true, parent: 'sec-op', getValue: r => r.noiInflow },
-  { key: 'upfront',   kind: 'data', label: 'Upfront fee',          indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.upfrontFeeOutflow },
-  { key: 'mgmt',      kind: 'data', label: 'Management fee',       indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.managementFeeOutflow },
-  { key: 'fundExp',   kind: 'data', label: 'Fund Level Expenses',  indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.fundExpensesOutflow },
-  { key: 'sfOper',    kind: 'data', label: 'Success fee операц.',  indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.successFeeOperationalOutflow },
-  { key: 'sfExit',    kind: 'data', label: 'Success fee выход',    indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.successFeeExitOutflow },
+  { key: 'noi',       kind: 'data', label: 'NOI от объектов',     indent: true, parent: 'sec-op', getValue: r => r.noiInflow, getTrace: r => r.noiInflowTrace },
+  { key: 'upfront',   kind: 'data', label: 'Upfront fee',          indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.upfrontFeeOutflow, getTrace: r => r.upfrontFeeOutflowTrace },
+  { key: 'mgmt',      kind: 'data', label: 'Management fee',       indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.managementFeeOutflow, getTrace: r => r.managementFeeOutflowTrace },
+  { key: 'fundExp',   kind: 'data', label: 'Fund Level Expenses',  indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.fundExpensesOutflow, getTrace: r => r.fundExpensesOutflowTrace },
+  { key: 'sfOper',    kind: 'data', label: 'Success fee операц.',  indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.successFeeOperationalOutflow, getTrace: r => r.successFeeOperationalOutflowTrace },
+  { key: 'sfExit',    kind: 'data', label: 'Success fee выход',    indent: true, parent: 'sec-op', isExpense: true, getValue: r => r.successFeeExitOutflow, getTrace: r => r.successFeeExitOutflowTrace },
   { key: 'opTotal',   kind: 'subtotal', label: 'Итого операционный CF', bold: true, separator: true, getValue: r => operationalCF(r) },
 
   { key: 'sec-inv',   kind: 'sectionHeader', label: 'ИНВЕСТИЦИОННЫЙ ДЕНЕЖНЫЙ ПОТОК', collapsible: true },
-  { key: 'acq',       kind: 'data', label: 'Покупка объектов',     indent: true, parent: 'sec-inv', isExpense: true, getValue: r => r.acquisitionOutflow },
-  { key: 'disp',      kind: 'data', label: 'Продажа объектов',     indent: true, parent: 'sec-inv', getValue: r => r.disposalInflow },
+  { key: 'acq',       kind: 'data', label: 'Покупка объектов',     indent: true, parent: 'sec-inv', isExpense: true, getValue: r => r.acquisitionOutflow, getTrace: r => r.acquisitionOutflowTrace },
+  { key: 'disp',      kind: 'data', label: 'Продажа объектов',     indent: true, parent: 'sec-inv', getValue: r => r.disposalInflow, getTrace: r => r.disposalInflowTrace },
   { key: 'invTotal',  kind: 'subtotal', label: 'Итого инвестиционный CF', bold: true, separator: true, getValue: r => investingCF(r) },
 
   { key: 'fundFCF',   kind: 'subtotal', label: 'FCF фонда', bold: true, colored: true, separator: true, getValue: r => fundFCF(r) },
 
-  { key: 'dist',       kind: 'data', label: 'Выплаты пайщикам',  isExpense: true, getValue: r => r.distributionOutflow },
-  { key: 'redemption', kind: 'data', label: 'Погашение паёв',     isExpense: true, separator: true, getValue: r => r.redemptionOutflow },
+  { key: 'dist',       kind: 'data', label: 'Выплаты пайщикам',  isExpense: true, getValue: r => r.distributionOutflow, getTrace: r => r.distributionOutflowTrace },
+  { key: 'redemption', kind: 'data', label: 'Погашение паёв',     isExpense: true, separator: true, getValue: r => r.redemptionOutflow, getTrace: r => r.redemptionOutflowTrace },
 
   { key: 'sec-fin',   kind: 'sectionHeader', label: 'ФИНАНСОВЫЙ ДЕНЕЖНЫЙ ПОТОК', collapsible: true },
-  { key: 'emission',  kind: 'data', label: 'Эмиссия', indent: true, parent: 'sec-fin', getValue: r => r.emissionInflow },
-  { key: 'finTotal',  kind: 'subtotal', label: 'Итого финансовый CF', bold: true, separator: true, getValue: r => r.emissionInflow },
+  { key: 'emission',  kind: 'data', label: 'Эмиссия', indent: true, parent: 'sec-fin', getValue: r => r.emissionInflow, getTrace: r => r.emissionInflowTrace },
+  { key: 'finTotal',  kind: 'subtotal', label: 'Итого финансовый CF', bold: true, separator: true, getValue: r => r.emissionInflow, getTrace: r => r.emissionInflowTrace },
 
   { key: 'sec-icf',   kind: 'sectionHeader', label: 'ДЕНЕЖНЫЙ ПОТОК ИНВЕСТОРА' },
-  { key: 'icfRow',    kind: 'subtotal', label: 'Поток инвестора', bold: true, colored: true, getValue: investorCF },
+  { key: 'icfRow',    kind: 'subtotal', label: 'Поток инвестора', bold: true, colored: true, getValue: investorCF, getTrace: r => r.investorCashflowTrace },
 ]
 
 // ─── Динамические строки объекта ─────────────────────────────────────────────
@@ -111,6 +114,7 @@ function buildPropertyRows(cashflows: readonly MonthlyCashflow[]): RowSpec<Month
     indent: true,
     parent: 'rent-parent',
     getValue: cf => cf.tenants.find(t => t.tenantId === id)?.rentIncome ?? 0,
+    getTrace: cf => cf.tenants.find(t => t.tenantId === id)?.rentIncomeTrace,
   }))
   const opexReimbChildren: RowSpec<MonthlyCashflow>[] = tenants.map(([id, name]) => ({
     key: `opexreimb-${id}`,
@@ -119,6 +123,7 @@ function buildPropertyRows(cashflows: readonly MonthlyCashflow[]): RowSpec<Month
     indent: true,
     parent: 'opexreimb-parent',
     getValue: cf => cf.tenants.find(t => t.tenantId === id)?.opexReimbursement ?? 0,
+    getTrace: cf => cf.tenants.find(t => t.tenantId === id)?.opexReimbursementTrace,
   }))
 
   return [
@@ -131,16 +136,16 @@ function buildPropertyRows(cashflows: readonly MonthlyCashflow[]): RowSpec<Month
       getValue: cf => sumRent(cf) + sumOpexReimb(cf) },
 
     { key: 'sec-expenses',     kind: 'sectionHeader', label: 'РАСХОДЫ', collapsible: true },
-    { key: 'opex',             kind: 'data', label: 'OPEX',               parent: 'sec-expenses', isExpense: true, getValue: cf => cf.opex },
-    { key: 'propertyTax',      kind: 'data', label: 'Налог на имущество', parent: 'sec-expenses', isExpense: true, getValue: cf => cf.propertyTax },
-    { key: 'landTax',          kind: 'data', label: 'Налог на ЗУ',        parent: 'sec-expenses', isExpense: true, getValue: cf => cf.landTax },
-    { key: 'maintenance',      kind: 'data', label: 'Эксплуатация',       parent: 'sec-expenses', isExpense: true, getValue: cf => cf.maintenance },
-    { key: 'capex',            kind: 'data', label: 'CAPEX',              parent: 'sec-expenses', isExpense: true, getValue: cf => cf.capex },
+    { key: 'opex',             kind: 'data', label: 'OPEX',               parent: 'sec-expenses', isExpense: true, getValue: cf => cf.opex,         getTrace: cf => cf.opexTrace },
+    { key: 'propertyTax',      kind: 'data', label: 'Налог на имущество', parent: 'sec-expenses', isExpense: true, getValue: cf => cf.propertyTax,  getTrace: cf => cf.propertyTaxTrace },
+    { key: 'landTax',          kind: 'data', label: 'Налог на ЗУ',        parent: 'sec-expenses', isExpense: true, getValue: cf => cf.landTax,      getTrace: cf => cf.landTaxTrace },
+    { key: 'maintenance',      kind: 'data', label: 'Эксплуатация',       parent: 'sec-expenses', isExpense: true, getValue: cf => cf.maintenance,  getTrace: cf => cf.maintenanceTrace },
+    { key: 'capex',            kind: 'data', label: 'CAPEX',              parent: 'sec-expenses', isExpense: true, getValue: cf => cf.capex,        getTrace: cf => cf.capexTrace },
     { key: 'total-expenses',   kind: 'subtotal', label: 'Итого расходы',  bold: true, isExpense: true, separator: true,
       getValue: sumExpenses },
 
-    { key: 'noi', kind: 'subtotal', label: 'NOI', bold: true, colored: true, getValue: cf => cf.noi },
-    { key: 'fcf', kind: 'subtotal', label: 'FCF', bold: true, colored: true, separator: true, getValue: cf => cf.fcf },
+    { key: 'noi', kind: 'subtotal', label: 'NOI', bold: true, colored: true, getValue: cf => cf.noi, getTrace: cf => cf.noiTrace },
+    { key: 'fcf', kind: 'subtotal', label: 'FCF', bold: true, colored: true, separator: true, getValue: cf => cf.fcf, getTrace: cf => cf.fcfTrace },
   ]
 }
 
@@ -241,6 +246,8 @@ function TableInner<T extends { period: MonthlyPeriod }>({ items, rows, periodic
   const yearGroups = groupByYear(items)
   // V4.8.1: дефолт — всё развёрнуто. Состояние не персистится между сессиями (задача).
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  // V4.9.2: трассировка по двойному клику.
+  const { open, modal } = useCellDoubleClick()
 
   const rowsByKey = new Map(rows.map(r => [r.key, r]))
 
@@ -268,6 +275,7 @@ function TableInner<T extends { period: MonthlyPeriod }>({ items, rows, periodic
   }
 
   return (
+    <>
     <div className="overflow-x-auto rounded-lg border border-gray-200">
       <table className="text-sm border-collapse min-w-full">
         {/* ── Шапка ── */}
@@ -347,13 +355,16 @@ function TableInner<T extends { period: MonthlyPeriod }>({ items, rows, periodic
                 {items.map((it, cfIdx) => {
                   const raw = row.getValue ? row.getValue(it, cfIdx, items) : 0
                   const { text, className } = formatCell(raw, !!row.isExpense, !!row.colored)
+                  const trace = row.getTrace?.(it, cfIdx, items)
                   return (
                     <td
                       key={cfIdx}
+                      onDoubleClick={trace ? () => open(trace, periodTitle(row.label, it.period)) : undefined}
                       className={[
                         'px-3 py-2 text-right whitespace-nowrap tabular-nums border-r border-gray-100 last:border-r-0',
                         row.bold ? 'font-medium' : '',
                         className,
+                        trace ? TRACE_CELL_CLS : '',
                       ].join(' ')}
                     >
                       {text}
@@ -366,6 +377,8 @@ function TableInner<T extends { period: MonthlyPeriod }>({ items, rows, periodic
         </tbody>
       </table>
     </div>
+    {modal}
+    </>
   )
 }
 

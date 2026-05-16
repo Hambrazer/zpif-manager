@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import type { NAVResult, MonthlyPeriod } from '@/lib/types'
+import type { NAVResult, MonthlyPeriod, Trace } from '@/lib/types'
+import { periodTitle, TRACE_CELL_CLS, useCellDoubleClick } from '../useCellDoubleClick'
 
 // V4.6.4: иерархическая раскладка СЧА по периодам.
 // Раскрытие/сворачивание блока «Стоимость объектов» — в V4.8.
@@ -59,9 +60,17 @@ function findPropertyValue(row: NAVResult, propKey: string): number {
   return pv?.value ?? 0
 }
 
+function findPropertyTrace(row: NAVResult, propKey: string): Trace | undefined {
+  if (!row.propertyValues) return undefined
+  const pv = row.propertyValues.find(p => (p.propertyId ?? p.propertyName) === propKey)
+  return pv?.valueTrace
+}
+
 export function NAVBreakdownTable({ data, totalUnits }: Props) {
   // V4.8.3: «Стоимость объектов» раскрываемо. Дефолт — развёрнуто.
   const [propsCollapsed, setPropsCollapsed] = useState(false)
+  // V4.9.2: трассировка по двойному клику.
+  const { open, modal } = useCellDoubleClick()
 
   if (data.length === 0) {
     return <div className="text-sm text-gray-400 py-8 text-center">Нет данных для отображения</div>
@@ -71,6 +80,7 @@ export function NAVBreakdownTable({ data, totalUnits }: Props) {
   const yearGroups = groupByYear(data)
 
   return (
+    <>
     <div className="overflow-x-auto rounded-lg border border-gray-200">
       <table className="text-sm border-collapse min-w-full">
         <thead>
@@ -113,6 +123,7 @@ export function NAVBreakdownTable({ data, totalUnits }: Props) {
             collapsible
             collapsed={propsCollapsed}
             onToggle={() => setPropsCollapsed(v => !v)}
+            onCellDoubleClick={open}
           />
 
           {/* ── Объекты (под-строки) — скрыты при свёрнутом родителе ── */}
@@ -122,23 +133,27 @@ export function NAVBreakdownTable({ data, totalUnits }: Props) {
               label={prop.name}
               data={data}
               getValue={r => findPropertyValue(r, prop.key)}
+              getTrace={r => findPropertyTrace(r, prop.key)}
               indent
+              onCellDoubleClick={open}
             />
           ))}
 
           {/* ── Кэш фонда / Остаток долга ── */}
-          <Row label="+ Кэш фонда"      data={data} getValue={r => r.cash} />
-          <Row label="− Остаток долга"  data={data} getValue={r => r.debtBalance} separator />
+          <Row label="+ Кэш фонда"      data={data} getValue={r => r.cash}        onCellDoubleClick={open} />
+          <Row label="− Остаток долга"  data={data} getValue={r => r.debtBalance} separator onCellDoubleClick={open} />
 
           {/* ── СЧА (жирный итог) ── */}
-          <Row label="СЧА" data={data} getValue={r => r.nav} bold colored />
+          <Row label="СЧА" data={data} getValue={r => r.nav} getTrace={r => r.navTrace} bold colored onCellDoubleClick={open} />
 
           {/* ── Количество паёв (статика) и РСП ── */}
-          <Row label="Количество паёв" data={data} getValue={() => totalUnits} indent />
-          <Row label="РСП" data={data} getValue={r => r.rsp} bold colored />
+          <Row label="Количество паёв" data={data} getValue={() => totalUnits} indent onCellDoubleClick={open} />
+          <Row label="РСП" data={data} getValue={r => r.rsp} getTrace={r => r.unitPriceTrace} bold colored onCellDoubleClick={open} />
         </tbody>
       </table>
     </div>
+    {modal}
+    </>
   )
 }
 
@@ -148,6 +163,7 @@ function Row({
   label,
   data,
   getValue,
+  getTrace,
   bold,
   indent,
   separator,
@@ -155,10 +171,12 @@ function Row({
   collapsible,
   collapsed,
   onToggle,
+  onCellDoubleClick,
 }: {
   label: string
   data: NAVResult[]
   getValue: (r: NAVResult) => number
+  getTrace?: (r: NAVResult) => Trace | undefined
   bold?: boolean
   indent?: boolean
   separator?: boolean
@@ -166,6 +184,7 @@ function Row({
   collapsible?: boolean
   collapsed?: boolean
   onToggle?: () => void
+  onCellDoubleClick?: (trace: Trace, title: string) => void
 }) {
   return (
     <tr
@@ -195,17 +214,20 @@ function Row({
       </td>
       {data.map((r, idx) => {
         const value = getValue(r)
+        const trace = getTrace?.(r)
         const className = colored
           ? (value < 0 ? 'text-red-600' : 'text-emerald-600')
           : (value < 0 ? 'text-red-500' : 'text-gray-800')
         return (
           <td
             key={idx}
+            onDoubleClick={trace && onCellDoubleClick ? () => onCellDoubleClick(trace, periodTitle(label, r.period)) : undefined}
             className={[
               'px-3 py-2 text-right whitespace-nowrap tabular-nums border-r border-gray-100 last:border-r-0',
               bold ? 'font-medium' : '',
               className,
               value === 0 ? 'text-gray-300' : '',
+              trace ? TRACE_CELL_CLS : '',
             ].join(' ')}
           >
             {formatNumber(value)}

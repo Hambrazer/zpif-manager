@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { CashflowTable } from '@/components/tables/CashflowTable'
 import { CashRollTable } from '@/components/tables/CashRollTable'
 import { NAVBreakdownTable } from '@/components/tables/NAVBreakdownTable'
+import { TRACE_CELL_CLS, useCellDoubleClick } from '@/components/useCellDoubleClick'
 import { aggregateFundCashRoll, type YearMode } from '@/lib/utils/aggregate'
 import { calcInvestorIRR, getReferencePoint } from '@/lib/calculations/metrics'
 import { formatRub, formatPct } from '@/lib/utils/format'
@@ -13,6 +14,7 @@ import type {
   MonthlyPeriod,
   NAVResult,
   ReferencePoint,
+  Trace,
 } from '@/lib/types'
 
 // ─── Типы ─────────────────────────────────────────────────────────────────────
@@ -34,6 +36,13 @@ type Metrics = {
   irr: number | null
   nav: number | null
   rsp: number | null
+  // V4.9.3 — раскладки. Для IRR — режим 'cashflow' (таблица потока инвестора).
+  noiTrace: Trace | null
+  fcfTrace: Trace | null
+  capRateTrace: Trace | null
+  irrTrace: Trace | null
+  navTrace: Trace | null
+  rspTrace: Trace | null
 }
 
 type CfTab = 'cashflow' | 'cashroll' | 'nav'
@@ -42,6 +51,30 @@ type CfTab = 'cashflow' | 'cashroll' | 'nav'
 
 const EMPTY_METRICS: Metrics = {
   annualNOI: null, annualFCF: null, capRate: null, irr: null, nav: null, rsp: null,
+  noiTrace: null, fcfTrace: null, capRateTrace: null, irrTrace: null, navTrace: null, rspTrace: null,
+}
+
+function monthKey(p: MonthlyPeriod): string {
+  return `${p.year}-${String(p.month).padStart(2, '0')}`
+}
+
+// V4.9.3 — Trace для суммы annual NOI/FCF по окну 12 месяцев.
+function annualSumTrace(
+  window: MonthlyCashflow[],
+  field: 'noi' | 'fcf',
+  traceField: 'noiTrace' | 'fcfTrace',
+  label: string,
+): Trace {
+  return {
+    formula: `Σ ${label} за ${window.length} месяцев`,
+    operands: window.map(cf => ({
+      label: monthKey(cf.period),
+      value: cf[field],
+      unit: '₽',
+      ...(cf[traceField] ? { trace: cf[traceField] } : {}),
+    })),
+    value: window.reduce((s, cf) => s + cf[field], 0),
+  }
 }
 
 function findPeriodIndex<T extends { period: MonthlyPeriod }>(
@@ -89,6 +122,20 @@ function computeMetrics(
     ? annualNOI / acquisitionPrice
     : null
 
+  // V4.9.3 — раскладки для NOI/FCF/Cap Rate.
+  const noiTrace = annualNOI !== null ? annualSumTrace(window, 'noi', 'noiTrace', 'NOI') : null
+  const fcfTrace = annualFCF !== null ? annualSumTrace(window, 'fcf', 'fcfTrace', 'FCF') : null
+  const capRateTrace: Trace | null = (capRate !== null && annualNOI !== null)
+    ? {
+        formula: 'NOI/год ÷ стоимость приобретения',
+        operands: [
+          { label: 'NOI/год', value: annualNOI, unit: '₽', ...(noiTrace ? { trace: noiTrace } : {}) },
+          { label: 'Стоимость приобретения', value: acquisitionPrice, unit: '₽' },
+        ],
+        value: capRate,
+      }
+    : null
+
   // СЧА/РСП — из NAVResult на reference date. РСП берём из nav-серии, чтобы
   // согласоваться с уже посчитанным значением (а не пересчитывать вручную).
   const refNav = findNAV(navData, ref.date)
@@ -96,29 +143,52 @@ function computeMetrics(
   const rsp = refNav
     ? refNav.rsp
     : (nav !== null && totalUnits > 0 ? nav / totalUnits : null)
+  const navTrace = refNav?.navTrace ?? null
+  const rspTrace = refNav?.unitPriceTrace ?? null
 
   // IRR — накопленный по потоку инвестора, обрезанному до reference date включительно.
   // Если refIdxCR не нашли (например refDate раньше первого месяца фонда) — IRR=null.
   let irr: number | null = null
+  let irrTrace: Trace | null = null
   if (refIdxCR !== -1) {
     const sliced = cashRoll.slice(0, refIdxCR + 1)
     const irrAnnual = sliced.length > 0 ? calcInvestorIRR(sliced).value : 0
     irr = irrAnnual === 0 ? null : irrAnnual
+    // V4.9.3 — раскладка IRR: операнды только периоды потока инвестора. CalcDetails
+    // в режиме 'cashflow' добавит колонку накопленного потока и отформатирует итог как %.
+    if (irr !== null && sliced.length > 0) {
+      irrTrace = {
+        formula: 'IRR от потока инвестора (помесячно, аннуализирован)',
+        operands: sliced.map(r => ({
+          label: monthKey(r.period),
+          value: r.investorCashflow,
+          unit: '₽',
+          ...(r.investorCashflowTrace ? { trace: r.investorCashflowTrace } : {}),
+        })),
+        value: irrAnnual,
+      }
+    }
   }
 
-  return { annualNOI, annualFCF, capRate, irr, nav, rsp }
+  return { annualNOI, annualFCF, capRate, irr, nav, rsp, noiTrace, fcfTrace, capRateTrace, irrTrace, navTrace, rspTrace }
 }
 
-type MetricBox = { label: string; value: number | null; format: (v: number) => string }
+type MetricBox = {
+  label: string
+  value: number | null
+  format: (v: number) => string
+  trace: Trace | null
+  mode?: 'cashflow'   // V4.9.3 — режим раскладки (для IRR)
+}
 
 function metricBoxes(m: Metrics): MetricBox[] {
   return [
-    { label: 'NOI/год',  value: m.annualNOI, format: formatRub },
-    { label: 'FCF/год',  value: m.annualFCF, format: formatRub },
-    { label: 'Cap Rate', value: m.capRate,   format: formatPct },
-    { label: 'IRR',      value: m.irr,       format: formatPct },
-    { label: 'СЧА',      value: m.nav,       format: formatRub },
-    { label: 'РСП',      value: m.rsp,       format: formatRub },
+    { label: 'NOI/год',  value: m.annualNOI, format: formatRub, trace: m.noiTrace },
+    { label: 'FCF/год',  value: m.annualFCF, format: formatRub, trace: m.fcfTrace },
+    { label: 'Cap Rate', value: m.capRate,   format: formatPct, trace: m.capRateTrace },
+    { label: 'IRR',      value: m.irr,       format: formatPct, trace: m.irrTrace, mode: 'cashflow' },
+    { label: 'СЧА',      value: m.nav,       format: formatRub, trace: m.navTrace },
+    { label: 'РСП',      value: m.rsp,       format: formatRub, trace: m.rspTrace },
   ]
 }
 
@@ -136,6 +206,8 @@ export function FundCashflowBlock({
   const [cfTab, setCfTab] = useState<CfTab>('cashflow')
   // V4.7.3: переключатель Календарный/LTM для вкладки «Денежный поток».
   const [yearMode, setYearMode] = useState<YearMode>('calendar')
+  // V4.9.3: трассировка карточек метрик по двойному клику.
+  const { open, modal } = useCellDoubleClick()
 
   // V4.4.2: reference point на лету (метрики + LTM-агрегация).
   const ref = getReferencePoint(
@@ -172,14 +244,25 @@ export function FundCashflowBlock({
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          {metricBoxes(metrics).map(({ label, value, format }) => (
-            <div key={label} className="bg-gray-50 rounded-lg px-4 py-3">
-              <p className="text-xs text-gray-400">{label}</p>
-              <p className="text-base font-semibold text-gray-900 mt-0.5 truncate">
-                {value !== null ? format(value) : '—'}
-              </p>
-            </div>
-          ))}
+          {metricBoxes(metrics).map(({ label, value, format, trace, mode }) => {
+            const clickable = trace !== null && value !== null
+            return (
+              <div
+                key={label}
+                onDoubleClick={clickable ? () => open(trace, label, mode ? { mode } : undefined) : undefined}
+                className={
+                  'bg-gray-50 rounded-lg px-4 py-3 ' +
+                  (clickable ? TRACE_CELL_CLS : '')
+                }
+                title={clickable ? 'Двойной клик — раскладка' : undefined}
+              >
+                <p className="text-xs text-gray-400">{label}</p>
+                <p className="text-base font-semibold text-gray-900 mt-0.5 truncate">
+                  {value !== null ? format(value) : '—'}
+                </p>
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -231,6 +314,8 @@ export function FundCashflowBlock({
           ? <NAVBreakdownTable data={navData} totalUnits={totalUnits} />
           : <div className="text-sm text-gray-400 py-8 text-center">Загрузка данных СЧА…</div>
       )}
+
+      {modal}
     </div>
   )
 }

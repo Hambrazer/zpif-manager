@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { AddPropertyToFundModal } from '@/components/modals/AddPropertyToFundModal'
+import { AddPropertyChoiceModal } from '@/components/modals/AddPropertyChoiceModal'
+import { CreatePropertyInFundModal } from '@/components/modals/CreatePropertyInFundModal'
 import { FundCashflowBlock } from './FundCashflowBlock'
 import { FundGraphsBlock } from './FundGraphsBlock'
 import { PropertiesTable } from '@/components/tables/PropertiesTable'
@@ -141,7 +143,12 @@ const FUND_TABS: { id: FundTab; label: string }[] = [
 export function FundPage({ fund }: Props) {
   const router = useRouter()
   const [activeTab, setActiveTab] = useState<FundTab>('overview')
-  const [showAddProperty, setShowAddProperty] = useState(false)
+  // V4.10.1–V4.10.2: режимы добавления объекта.
+  //   'none'     — ничего не открыто
+  //   'choice'   — модалка выбора способа
+  //   'pipeline' — привязка из pipeline (AddPropertyToFundModal)
+  //   'new'      — создание нового объекта сразу в фонде (CreatePropertyInFundModal)
+  const [addMode, setAddMode] = useState<'none' | 'choice' | 'pipeline' | 'new'>('none')
   const [navData, setNavData] = useState<NAVResult[] | null>(null)
   const [cashflows, setCashflows] = useState<MonthlyCashflow[]>([])
   const [cashRoll, setCashRoll] = useState<MonthlyCashRoll[]>([])
@@ -317,10 +324,10 @@ export function FundPage({ fund }: Props) {
               </span>
             </h2>
             <button
-              onClick={() => setShowAddProperty(true)}
+              onClick={() => setAddMode('choice')}
               className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
             >
-              + Добавить объект из pipeline
+              + Добавить объект
             </button>
           </div>
 
@@ -384,15 +391,32 @@ export function FundPage({ fund }: Props) {
         )}
       </main>
 
+      {/* ── Модалка выбора способа добавления (V4.10.1) ── */}
+      {addMode === 'choice' && (
+        <AddPropertyChoiceModal
+          onClose={() => setAddMode('none')}
+          onSelectPipeline={() => setAddMode('pipeline')}
+          onSelectNew={() => setAddMode('new')}
+        />
+      )}
+
       {/* ── Модальное окно «Добавить объект из pipeline» (V3.8.4) ── */}
-      {showAddProperty && (
+      {addMode === 'pipeline' && (
         <AddPropertyToFundModal
           fundId={fund.id}
-          onClose={() => setShowAddProperty(false)}
+          onClose={() => setAddMode('none')}
           onSuccess={() => {
-            setShowAddProperty(false)
+            setAddMode('none')
             router.refresh()
           }}
+        />
+      )}
+
+      {/* ── Модалка создания нового объекта сразу в фонде (V4.10.2) ── */}
+      {addMode === 'new' && (
+        <CreatePropertyInFundModal
+          fundId={fund.id}
+          onClose={() => setAddMode('none')}
         />
       )}
     </div>

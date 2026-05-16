@@ -1,6 +1,7 @@
 'use client'
 
-import type { MonthlyCashRoll } from '@/lib/types'
+import type { MonthlyCashRoll, Trace } from '@/lib/types'
+import { periodTitle, TRACE_CELL_CLS, useCellDoubleClick } from '../useCellDoubleClick'
 
 // ─── Типы строк ───────────────────────────────────────────────────────────────
 
@@ -8,6 +9,11 @@ import type { MonthlyCashRoll } from '@/lib/types'
 // `-?` снимает optional, чтобы условный тип не схлопывался в never.
 type NumericKey = {
   [K in keyof MonthlyCashRoll]-?: MonthlyCashRoll[K] extends number ? K : never
+}[keyof MonthlyCashRoll]
+
+// V4.9.2: ключи trace-полей в MonthlyCashRoll.
+type TraceKey = {
+  [K in keyof MonthlyCashRoll]-?: MonthlyCashRoll[K] extends Trace | undefined ? K : never
 }[keyof MonthlyCashRoll]
 
 type DataRow = {
@@ -18,6 +24,7 @@ type DataRow = {
   separator?: boolean
   bold?: boolean
   highlight?: boolean  // true → красный фон при отрицательном cashBegin/cashEnd
+  traceKey?: TraceKey  // V4.9.2: имя поля с Trace, если есть
 }
 
 type SectionRow = {
@@ -32,18 +39,18 @@ type RowDef = DataRow | SectionRow
 const ROWS: readonly RowDef[] = [
   { type: 'data',    key: 'cashBegin',                    label: 'Кэш начало',             isExpense: false, separator: true, bold: true, highlight: true },
   { type: 'section', label: 'Притоки' },
-  { type: 'data',    key: 'noiInflow',                    label: 'NOI от объектов',        isExpense: false },
-  { type: 'data',    key: 'disposalInflow',               label: 'Продажи объектов',       isExpense: false },
-  { type: 'data',    key: 'emissionInflow',               label: 'Привлечение капитала',   isExpense: false, separator: true },
+  { type: 'data',    key: 'noiInflow',                    label: 'NOI от объектов',        isExpense: false, traceKey: 'noiInflowTrace' },
+  { type: 'data',    key: 'disposalInflow',               label: 'Продажи объектов',       isExpense: false, traceKey: 'disposalInflowTrace' },
+  { type: 'data',    key: 'emissionInflow',               label: 'Привлечение капитала',   isExpense: false, separator: true, traceKey: 'emissionInflowTrace' },
   { type: 'section', label: 'Оттоки' },
-  { type: 'data',    key: 'acquisitionOutflow',           label: 'Покупки объектов',       isExpense: true },
-  { type: 'data',    key: 'upfrontFeeOutflow',            label: 'Upfront fee',            isExpense: true },
-  { type: 'data',    key: 'managementFeeOutflow',         label: 'Вознаграждение УК',      isExpense: true },
-  { type: 'data',    key: 'fundExpensesOutflow',          label: 'Расходы фонда',          isExpense: true },
-  { type: 'data',    key: 'successFeeOperationalOutflow', label: 'Success fee (операц.)',  isExpense: true },
-  { type: 'data',    key: 'successFeeExitOutflow',        label: 'Success fee (выход)',    isExpense: true },
+  { type: 'data',    key: 'acquisitionOutflow',           label: 'Покупки объектов',       isExpense: true, traceKey: 'acquisitionOutflowTrace' },
+  { type: 'data',    key: 'upfrontFeeOutflow',            label: 'Upfront fee',            isExpense: true, traceKey: 'upfrontFeeOutflowTrace' },
+  { type: 'data',    key: 'managementFeeOutflow',         label: 'Вознаграждение УК',      isExpense: true, traceKey: 'managementFeeOutflowTrace' },
+  { type: 'data',    key: 'fundExpensesOutflow',          label: 'Расходы фонда',          isExpense: true, traceKey: 'fundExpensesOutflowTrace' },
+  { type: 'data',    key: 'successFeeOperationalOutflow', label: 'Success fee (операц.)',  isExpense: true, traceKey: 'successFeeOperationalOutflowTrace' },
+  { type: 'data',    key: 'successFeeExitOutflow',        label: 'Success fee (выход)',    isExpense: true, traceKey: 'successFeeExitOutflowTrace' },
   { type: 'data',    key: 'debtServiceOutflow',           label: 'Обслуживание долга',     isExpense: true },
-  { type: 'data',    key: 'distributionOutflow',          label: 'Выплаты пайщикам',      isExpense: true, separator: true },
+  { type: 'data',    key: 'distributionOutflow',          label: 'Выплаты пайщикам',      isExpense: true, separator: true, traceKey: 'distributionOutflowTrace' },
   { type: 'data',    key: 'cashEnd',                      label: 'Кэш конец',             isExpense: false, bold: true, highlight: true },
 ]
 
@@ -106,6 +113,9 @@ type Props = {
 }
 
 export function CashRollTable({ data }: Props) {
+  // V4.9.2: трассировка по двойному клику.
+  const { open, modal } = useCellDoubleClick()
+
   if (data.length === 0) {
     return (
       <div className="text-sm text-gray-400 py-8 text-center">
@@ -117,6 +127,7 @@ export function CashRollTable({ data }: Props) {
   const yearGroups = groupByYear(data)
 
   return (
+    <>
     <div className="overflow-x-auto rounded-lg border border-gray-200">
       <table className="text-sm border-collapse min-w-full">
 
@@ -171,7 +182,7 @@ export function CashRollTable({ data }: Props) {
             }
 
             /* Строка с данными */
-            const { key, label, isExpense, separator, bold, highlight } = rowDef
+            const { key, label, isExpense, separator, bold, highlight, traceKey } = rowDef
 
             return (
               <tr
@@ -194,16 +205,22 @@ export function CashRollTable({ data }: Props) {
                 {/* Ячейки по месяцам */}
                 {data.map((roll, cfIdx) => {
                   const raw = roll[key]
+                  const trace = traceKey ? roll[traceKey] : undefined
+                  const traceProps = trace
+                    ? { onDoubleClick: () => open(trace, periodTitle(label, roll.period)), className: TRACE_CELL_CLS }
+                    : { onDoubleClick: undefined, className: '' }
 
                   /* Кассовый разрыв: cashBegin / cashEnd < 0 — красный фон */
                   if (highlight && raw < 0) {
                     return (
                       <td
                         key={cfIdx}
+                        onDoubleClick={traceProps.onDoubleClick}
                         className={[
                           'px-3 py-2 text-right whitespace-nowrap tabular-nums border-r border-gray-100 last:border-r-0',
                           'bg-red-50 text-red-600',
                           bold ? 'font-semibold' : 'font-medium',
+                          traceProps.className,
                         ].join(' ')}
                       >
                         {formatHighlight(raw)}
@@ -215,10 +232,12 @@ export function CashRollTable({ data }: Props) {
                   return (
                     <td
                       key={cfIdx}
+                      onDoubleClick={traceProps.onDoubleClick}
                       className={[
                         'px-3 py-2 text-right whitespace-nowrap tabular-nums border-r border-gray-100 last:border-r-0',
                         bold ? 'font-semibold' : '',
                         className,
+                        traceProps.className,
                       ].join(' ')}
                     >
                       {text}
@@ -231,5 +250,7 @@ export function CashRollTable({ data }: Props) {
         </tbody>
       </table>
     </div>
+    {modal}
+    </>
   )
 }

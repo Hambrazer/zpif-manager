@@ -1,12 +1,15 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type MouseEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { signOut } from 'next-auth/react'
 import { type FundStatus } from '@prisma/client'
 import { FundForm } from '@/components/forms/FundForm'
+import { TRACE_CELL_CLS, useCellDoubleClick } from '@/components/useCellDoubleClick'
 import { formatRub, formatPct } from '@/lib/utils/format'
+import type { Trace } from '@/lib/types'
+import type { CalcDetailsMode } from '@/components/CalcDetails'
 
 // V4.3.3: значения query-параметра `?status=` на /dashboard.
 export type FundStatusFilter = 'active' | 'closed' | 'archived' | 'all'
@@ -32,6 +35,10 @@ export type FundSummary = {
   nav: number | null
   navPerUnit: number | null
   occupancy: number | null
+  // V4.9.5 — раскладки для двойного клика по метрикам (NOI/IRR/СЧА).
+  annualNOITrace?: Trace
+  irrTrace?: Trace
+  navTrace?: Trace
 }
 
 type Props = {
@@ -42,6 +49,8 @@ type Props = {
 export function FundsDashboard({ funds, currentFilter }: Props) {
   const router = useRouter()
   const [showCreate, setShowCreate] = useState(false)
+  // V4.9.5: трассировка метрик на карточках.
+  const { open: openTrace, modal: traceModal } = useCellDoubleClick()
 
   function handleCreated() {
     setShowCreate(false)
@@ -98,11 +107,13 @@ export function FundsDashboard({ funds, currentFilter }: Props) {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {funds.map(fund => (
-              <FundCard key={fund.id} fund={fund} />
+              <FundCard key={fund.id} fund={fund} onOpenTrace={openTrace} />
             ))}
           </div>
         )}
       </main>
+
+      {traceModal}
 
       {showCreate && (
         <div
@@ -163,7 +174,21 @@ function StatusBadge({ status }: { status: FundStatus }) {
   )
 }
 
-function FundCard({ fund }: { fund: FundSummary }) {
+type OpenTraceFn = (trace: Trace, title: string, opts?: { mode?: CalcDetailsMode }) => void
+
+function FundCard({ fund, onOpenTrace }: { fund: FundSummary; onOpenTrace: OpenTraceFn }) {
+  // V4.9.5: открыватели раскладок для NOI/IRR/СЧА. Titles включают название фонда —
+  // на дашборде несколько карточек, чтобы пользователь понимал, чьи метрики смотрит.
+  const openNoi = fund.annualNOITrace
+    ? () => onOpenTrace(fund.annualNOITrace!, `NOI/год · ${fund.name}`)
+    : undefined
+  const openIrr = fund.irrTrace
+    ? () => onOpenTrace(fund.irrTrace!, `IRR · ${fund.name}`, { mode: 'cashflow' })
+    : undefined
+  const openNav = fund.navTrace
+    ? () => onOpenTrace(fund.navTrace!, `СЧА · ${fund.name}`)
+    : undefined
+
   return (
     <Link
       href={`/funds/${fund.id}`}
@@ -193,6 +218,7 @@ function FundCard({ fund }: { fund: FundSummary }) {
           <Metric
             label="СЧА"
             value={fund.nav !== null ? formatRub(fund.nav) : '—'}
+            {...(openNav ? { onTraceOpen: openNav } : {})}
           />
           <Metric
             label="Стоимость пая"
@@ -201,10 +227,12 @@ function FundCard({ fund }: { fund: FundSummary }) {
           <Metric
             label="IRR"
             value={fund.irr !== null ? formatPct(fund.irr) : '—'}
+            {...(openIrr ? { onTraceOpen: openIrr } : {})}
           />
           <Metric
             label="NOI/год"
             value={fund.annualNOI !== null ? formatRub(fund.annualNOI) : '—'}
+            {...(openNoi ? { onTraceOpen: openNoi } : {})}
           />
           <Metric
             label="Загрузка"
@@ -220,9 +248,39 @@ function FundCard({ fund }: { fund: FundSummary }) {
   )
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({
+  label,
+  value,
+  onTraceOpen,
+}: {
+  label: string
+  value: string
+  onTraceOpen?: () => void   // V4.9.5 — если задан, метрика кликабельна (двойной клик)
+}) {
+  // Карточка фонда — это <Link>, поэтому одиночный клик по метрике переходит на
+  // страницу фонда. Если есть trace — глушим одиночный клик и обрабатываем
+  // только двойной (иначе браузер успеет навигироваться до dblclick).
+  function stop(e: MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  if (!onTraceOpen) {
+    return (
+      <div>
+        <p className="text-xs text-gray-400 leading-tight">{label}</p>
+        <p className="text-sm font-medium text-gray-700 mt-0.5">{value}</p>
+      </div>
+    )
+  }
+
   return (
-    <div>
+    <div
+      onClick={stop}
+      onDoubleClick={e => { stop(e); onTraceOpen() }}
+      className={'rounded -mx-1 px-1 -my-0.5 py-0.5 ' + TRACE_CELL_CLS}
+      title="Двойной клик — раскладка"
+    >
       <p className="text-xs text-gray-400 leading-tight">{label}</p>
       <p className="text-sm font-medium text-gray-700 mt-0.5">{value}</p>
     </div>
