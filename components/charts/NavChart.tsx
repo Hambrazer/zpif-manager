@@ -1,6 +1,5 @@
 'use client'
 
-import { useState } from 'react'
 import {
   LineChart,
   Line,
@@ -42,11 +41,12 @@ const rubFormatter = new Intl.NumberFormat('ru-RU', {
   maximumFractionDigits: 0,
 })
 
-type Mode = 'nav' | 'rsp'
+// V4.6.3: режим задаётся пропом извне (FundGraphsBlock), внутренний переключатель удалён.
+export type NavChartMode = 'nav' | 'rsp'
 
 type Props = {
   data: Pick<NAVResult, 'period' | 'nav' | 'rsp'>[]
-  mode?: Mode
+  mode?: NavChartMode
   height?: number
 }
 
@@ -55,9 +55,7 @@ type ChartPoint = {
   value: number
 }
 
-export function NavChart({ data, mode: initialMode = 'nav', height = 280 }: Props) {
-  const [mode, setMode] = useState<Mode>(initialMode)
-
+export function NavChart({ data, mode = 'nav', height = 280 }: Props) {
   if (data.length === 0) {
     return (
       <div
@@ -78,26 +76,7 @@ export function NavChart({ data, mode: initialMode = 'nav', height = 280 }: Prop
   const interval = xAxisInterval(points.length)
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-1">
-        {(['nav', 'rsp'] as Mode[]).map(m => (
-          <button
-            key={m}
-            type="button"
-            onClick={() => setMode(m)}
-            className={[
-              'px-3 py-1 rounded-md text-xs font-medium transition-colors',
-              mode === m
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
-            ].join(' ')}
-          >
-            {m === 'nav' ? 'СЧА' : 'РСП'}
-          </button>
-        ))}
-      </div>
-
-      <ResponsiveContainer width="100%" height={height}>
+    <ResponsiveContainer width="100%" height={height}>
         <LineChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
           <XAxis
@@ -137,6 +116,5 @@ export function NavChart({ data, mode: initialMode = 'nav', height = 280 }: Prop
           />
         </LineChart>
       </ResponsiveContainer>
-    </div>
   )
 }

@@ -38,6 +38,11 @@ export default async function FundDetailPage({ params }: Props) {
     totalUnits: fund.totalUnits,
     managementFeeRate: fund.managementFeeRate,
     fundExpensesRate: fund.fundExpensesRate,
+    // V4.6.2: дополнительные поля для FundBasicTab
+    upfrontFeeRate: fund.upfrontFeeRate,
+    successFeeOperational: fund.successFeeOperational,
+    successFeeExit: fund.successFeeExit,
+    status: fund.status,
     distributionPeriodicity: fund.distributionPeriodicity as 'MONTHLY' | 'QUARTERLY' | 'ANNUAL',
     properties: fund.properties.map(fp => {
       const p = fp.property

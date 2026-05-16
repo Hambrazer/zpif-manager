@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { CashflowTable } from '@/components/tables/CashflowTable'
 import { CashRollTable } from '@/components/tables/CashRollTable'
+import { NAVBreakdownTable } from '@/components/tables/NAVBreakdownTable'
 import { calcInvestorIRR, getReferencePoint } from '@/lib/calculations/metrics'
 import { formatRub, formatPct } from '@/lib/utils/format'
 import type {
@@ -34,7 +35,7 @@ type Metrics = {
   rsp: number | null
 }
 
-type CfTab = 'cashflow' | 'cashroll'
+type CfTab = 'cashflow' | 'cashroll' | 'nav'
 
 // ─── Метрики на reference point (V4.4.2) ──────────────────────────────────────
 
@@ -146,6 +147,7 @@ export function FundCashflowBlock({
   const tabs: { id: CfTab; label: string }[] = [
     { id: 'cashflow', label: 'Денежный поток' },
     { id: 'cashroll', label: 'Кэш-ролл' },
+    { id: 'nav',      label: 'СЧА' },
   ]
 
   return (
@@ -188,11 +190,13 @@ export function FundCashflowBlock({
         ))}
       </div>
 
-      {/* ── Таблица CF / Кэш-ролл ── */}
-      {cfTab === 'cashflow' ? (
-        <CashflowTable cashRoll={cashRoll} variant="fund" />
-      ) : (
-        <CashRollTable data={cashRoll} />
+      {/* ── Таблица CF / Кэш-ролл / СЧА ── */}
+      {cfTab === 'cashflow' && <CashflowTable cashRoll={cashRoll} variant="fund" />}
+      {cfTab === 'cashroll' && <CashRollTable data={cashRoll} />}
+      {cfTab === 'nav' && (
+        navData
+          ? <NAVBreakdownTable data={navData} totalUnits={totalUnits} />
+          : <div className="text-sm text-gray-400 py-8 text-center">Загрузка данных СЧА…</div>
       )}
     </div>
   )

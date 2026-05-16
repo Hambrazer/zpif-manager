@@ -5,10 +5,10 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { AddPropertyToFundModal } from '@/components/modals/AddPropertyToFundModal'
 import { FundCashflowBlock } from './FundCashflowBlock'
-import { FundChartsBlock } from './FundChartsBlock'
+import { FundGraphsBlock } from './FundGraphsBlock'
 import { PropertiesTable } from '@/components/tables/PropertiesTable'
 import { FundReportsTab } from './FundReportsTab'
-import { NavChart } from '@/components/charts/NavChart'
+import { FundBasicTab } from './FundBasicTab'
 import type { ReturnPoint } from '@/components/charts/ReturnChart'
 import { formatRub, formatPct, formatDate } from '@/lib/utils/format'
 import type {
@@ -16,6 +16,7 @@ import type {
   ApiResponse,
   MonthlyCashflow,
   MonthlyCashRoll,
+  FundStatus,
 } from '@/lib/types'
 
 // ─── Типы ─────────────────────────────────────────────────────────────────────
@@ -47,6 +48,11 @@ type FundData = {
   totalUnits: number
   managementFeeRate: number
   fundExpensesRate: number
+  // V4.6.2: поля для inline-редактирования
+  upfrontFeeRate: number
+  successFeeOperational: number
+  successFeeExit: number
+  status: FundStatus
   distributionPeriodicity: 'MONTHLY' | 'QUARTERLY' | 'ANNUAL'
   properties: PropertySummary[]
 }
@@ -123,11 +129,13 @@ function buildReturnPoints(
 
 // ─── Компонент ────────────────────────────────────────────────────────────────
 
-type FundTab = 'overview' | 'reports'
+// V4.6.1: три вкладки верхнего уровня. «Основное» — inline-редактирование (V4.6.2).
+type FundTab = 'overview' | 'basic' | 'reports'
 
 const FUND_TABS: { id: FundTab; label: string }[] = [
-  { id: 'overview', label: 'Обзор'   },
-  { id: 'reports',  label: 'Отчёты'  },
+  { id: 'overview', label: 'Обзор'    },
+  { id: 'basic',    label: 'Основное' },
+  { id: 'reports',  label: 'Отчёты'   },
 ]
 
 export function FundPage({ fund }: Props) {
@@ -255,15 +263,9 @@ export function FundPage({ fund }: Props) {
         </div>
 
         {activeTab === 'overview' && <>
-        {/* ── Блок 1: СЧА / РСП ── */}
+        {/* ── Блок 1: Графики (4 режима — V4.6.3) ── */}
         <section className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Динамика СЧА и РСП</h2>
-          <NavChart data={navData ?? []} />
-        </section>
-
-        {/* ── Блок 2: Графики денежного потока ── */}
-        <section className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Денежный поток фонда</h2>
+          <h2 className="text-base font-semibold text-gray-900 mb-4">Графики</h2>
           {cfLoading ? (
             <div className="flex items-center justify-center h-48 text-sm text-gray-400">
               <span className="animate-pulse">Расчёт денежного потока…</span>
@@ -273,11 +275,15 @@ export function FundPage({ fund }: Props) {
               {cfError}
             </div>
           ) : (
-            <FundChartsBlock cashflows={cashflows} returnPoints={returnPoints} />
+            <FundGraphsBlock
+              navData={navData ?? []}
+              cashflows={cashflows}
+              returnPoints={returnPoints}
+            />
           )}
         </section>
 
-        {/* ── Блок 3: Таблицы денежных потоков ── */}
+        {/* ── Блок 2: Таблицы денежных потоков (3 вкладки — V4.6.3) ── */}
         <section className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-base font-semibold text-gray-900 mb-4">Таблица денежных потоков</h2>
           {cfLoading ? (
@@ -301,7 +307,7 @@ export function FundPage({ fund }: Props) {
           )}
         </section>
 
-        {/* ── Блок 4: Объекты фонда ── */}
+        {/* ── Блок 3: Объекты фонда ── */}
         <section>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900">
@@ -331,6 +337,28 @@ export function FundPage({ fund }: Props) {
           )}
         </section>
         </>}
+
+        {activeTab === 'basic' && (
+          <FundBasicTab
+            fund={{
+              id: fund.id,
+              name: fund.name,
+              registrationNumber: fund.registrationNumber,
+              startDate: fund.startDate,
+              endDate: fund.endDate,
+              totalEmission: fund.totalEmission,
+              nominalUnitPrice: fund.nominalUnitPrice,
+              totalUnits: fund.totalUnits,
+              managementFeeRate: fund.managementFeeRate,
+              fundExpensesRate: fund.fundExpensesRate,
+              upfrontFeeRate: fund.upfrontFeeRate,
+              successFeeOperational: fund.successFeeOperational,
+              successFeeExit: fund.successFeeExit,
+              distributionPeriodicity: fund.distributionPeriodicity,
+              status: fund.status,
+            }}
+          />
+        )}
 
         {activeTab === 'reports' && (
           <FundReportsTab
